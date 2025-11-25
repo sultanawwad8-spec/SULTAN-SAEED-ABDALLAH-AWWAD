@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Listening Exam Generator",
+  "description": "Generate professional ESL/EFL listening exams with text scripts and AI-powered audio using Gemini 2.5.",
+  "requestFramePermissions": []
+}
