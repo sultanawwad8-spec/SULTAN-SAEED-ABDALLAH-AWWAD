@@ -3,20 +3,51 @@ import ControlPanel from './components/ControlPanel';
 import { ScriptDisplay } from './components/ScriptDisplay';
 import { QuestionsDisplay } from './components/QuestionsDisplay';
 import AudioPlayer from './components/AudioPlayer';
-import { DifficultyLevel, ExamConfig, ExamType, VoiceName, SpeechRate, EmotionalTone, Question } from './types';
+import {
+  DifficultyLevel,
+  ExamConfig,
+  ExamType,
+  VoiceName,
+  SpeechRate,
+  SpeakerTone,
+  Question,
+  ExamPurpose,
+  VocabularyComplexity,
+  SentenceStructure,
+  PauseStyle,
+  HistoryItem,
+  VoiceStyle,
+  AccentOption,
+} from './types';
 import { generateExamScript, generateExamAudio, generateExamQuestions } from './services/geminiService';
 import { base64ToUint8Array, decodeAudioData } from './utils/audioUtils';
+import HistoryList from './components/HistoryList';
+
+const defaultConfig: ExamConfig = {
+  topic: '',
+  level: DifficultyLevel.B1,
+  type: ExamType.MONOLOGUE,
+  wordCount: 200,
+  purpose: ExamPurpose.SCHOOL,
+  speakerCount: 2,
+  speakerTone: SpeakerTone.NEUTRAL,
+  primaryVoice: VoiceName.Zephyr,
+  secondaryVoice: VoiceName.Puck,
+  speechRate: SpeechRate.NORMAL,
+  voiceStylePrimary: VoiceStyle.FEMALE,
+  voiceStyleSecondary: VoiceStyle.MALE,
+  accent: AccentOption.AMERICAN,
+  vocabularyComplexity: VocabularyComplexity.MODERATE,
+  sentenceStructure: SentenceStructure.MIXED,
+  speedIndicator: 'Normal pace suitable for listening exams',
+  audioDuration: 90,
+  pauseStyle: PauseStyle.NATURAL,
+  includeQuestions: true,
+  includeAnswerKey: true,
+};
 
 const App: React.FC = () => {
-  const [config, setConfig] = useState<ExamConfig>({
-    topic: '',
-    level: DifficultyLevel.B1,
-    type: ExamType.MONOLOGUE,
-    primaryVoice: VoiceName.Zephyr,
-    secondaryVoice: VoiceName.Puck,
-    speechRate: SpeechRate.NORMAL,
-    emotionalTone: EmotionalTone.NEUTRAL,
-  });
+  const [config, setConfig] = useState<ExamConfig>(defaultConfig);
 
   const [activeTab, setActiveTab] = useState<'script' | 'questions'>('script');
 
@@ -28,6 +59,16 @@ const App: React.FC = () => {
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>(() => {
+    const cached = localStorage.getItem('listening-exam-history');
+    if (!cached) return [];
+    try {
+      return JSON.parse(cached) as HistoryItem[];
+    } catch (e) {
+      console.warn('Failed to parse history', e);
+      return [];
+    }
+  });
 
   const handleGenerateScript = async () => {
     setIsGeneratingScript(true);
@@ -70,13 +111,35 @@ const App: React.FC = () => {
       
       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
       const decodedBuffer = await decodeAudioData(audioBytes, audioContext, 24000);
-      
+
       setAudioBuffer(decodedBuffer);
+
+      const timestamp = Date.now();
+      const newHistoryItem: HistoryItem = {
+        id: `${timestamp}`,
+        createdAt: timestamp,
+        config,
+        script,
+      };
+
+      // Store minimal history (audio URLs generated in AudioPlayer when downloaded)
+      const nextHistory = [newHistoryItem, ...history].slice(0, 10);
+      setHistory(nextHistory);
+      localStorage.setItem('listening-exam-history', JSON.stringify(nextHistory));
     } catch (err: any) {
       setError(err.message || 'Failed to generate audio');
     } finally {
       setIsGeneratingAudio(false);
     }
+  };
+
+  const handleReset = () => {
+    setConfig(defaultConfig);
+    setScript('');
+    setQuestions([]);
+    setAudioBuffer(null);
+    setActiveTab('script');
+    setError(null);
   };
 
   return (
@@ -94,6 +157,15 @@ const App: React.FC = () => {
             <p className="text-sm text-slate-500">Powered by Gemini 2.5</p>
           </div>
         </div>
+
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-slate-600">
+          {["Generate New Audio", "Choose Type", "Set Parameters", "Preview Script", "Generate Audio", "Download Section", "History"].map((step) => (
+            <div key={step} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-3 py-2 shadow-sm">
+              <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+              <span className="font-semibold">{step}</span>
+            </div>
+          ))}
+        </div>
       </header>
 
       {/* Main Content */}
@@ -101,11 +173,12 @@ const App: React.FC = () => {
         
         {/* Left Column: Controls */}
         <div className="w-full lg:w-1/3 flex-none overflow-y-auto">
-          <ControlPanel 
-            config={config} 
-            setConfig={setConfig} 
+          <ControlPanel
+            config={config}
+            setConfig={setConfig}
             onGenerate={handleGenerateScript}
             isGenerating={isGeneratingScript}
+            onReset={handleReset}
           />
         </div>
 
@@ -148,11 +221,13 @@ const App: React.FC = () => {
                   />
                </div>
                <div className={`h-full ${activeTab === 'questions' ? 'block' : 'hidden'}`}>
-                  <QuestionsDisplay 
+                  <QuestionsDisplay
                     questions={questions}
                     onGenerate={handleGenerateQuestions}
                     isGenerating={isGeneratingQuestions}
                     hasScript={!!script}
+                    showAnswers={config.includeAnswerKey}
+                    enabled={config.includeQuestions}
                   />
                </div>
              </div>
@@ -160,9 +235,23 @@ const App: React.FC = () => {
 
           {audioBuffer && (
             <div className="flex-none">
-              <AudioPlayer audioBuffer={audioBuffer} />
+              <AudioPlayer
+                audioBuffer={audioBuffer}
+                config={config}
+                script={script}
+                onSave={(record) => {
+                  if (history.length === 0) return;
+                  const updatedHistory = history.map((item, idx) => idx === 0 ? { ...item, ...record } : item);
+                  setHistory(updatedHistory);
+                  localStorage.setItem('listening-exam-history', JSON.stringify(updatedHistory));
+                }}
+              />
             </div>
           )}
+
+          <div className="flex-none bg-white border border-slate-200 rounded-2xl shadow-sm p-4">
+            <HistoryList history={history} />
+          </div>
         </div>
       </main>
     </div>

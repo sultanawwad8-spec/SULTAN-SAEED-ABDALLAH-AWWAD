@@ -13,29 +13,27 @@ export const generateExamScript = async (config: ExamConfig): Promise<string> =>
   const ai = getAiClient();
   
   // Construct a prompt optimized for the 2.5 flash text model
-  let prompt = `You are a professional ESL/EFL exam content creator. 
-  Create a **${config.type}** script for **${config.level}** level students.
-  The topic is: "${config.topic}".
-  
-  The output must be a pure script.
-  `;
+  const pauseGuidance = config.pauseStyle === 'Natural pauses between sentences'
+    ? 'Add short natural pauses between sentences.'
+    : config.pauseStyle === 'Pauses between speakers'
+      ? 'Ensure a brief pause whenever the speaker changes.'
+      : 'Do not add pauses.';
 
-  if (config.type === ExamType.DIALOGUE || config.type === ExamType.CONVERSATION) {
-    prompt += `
-    This is a conversation between two people.
-    Use "Speaker A" and "Speaker B" as the labels.
-    Ensure the language difficulty strictly matches ${config.level}.
-    Keep it between 150-300 words.
-    Return ONLY the script text, no markdown formatting like **bold** or titles.
-    `;
-  } else {
-    prompt += `
-    This is a single-speaker text.
-    Ensure the language difficulty strictly matches ${config.level}.
-    Keep it between 150-300 words.
-    Return ONLY the script text, no markdown formatting like **bold** or titles.
-    `;
-  }
+  const speakerLabel = config.type === ExamType.MONOLOGUE
+    ? 'Speaker 1'
+    : `Speaker 1, Speaker 2${config.speakerCount > 2 ? ', Speaker 3/4 as needed' : ''}`;
+
+  const difficultyLine = `Difficulty: ${config.level}. Purpose: ${config.purpose}. Vocabulary: ${config.vocabularyComplexity}. Sentence structure: ${config.sentenceStructure}. Target pace: ${config.speedIndicator}. Target words: ${config.wordCount}.`;
+
+  const prompt = `You are a professional ESL/EFL listening-exam author.
+Generate a ${config.type} script with ${speakerLabel} labels on each line.
+Topic: "${config.topic}".
+${difficultyLine}
+Speaker tone: ${config.speakerTone}.
+${pauseGuidance}
+If ${config.type !== ExamType.MONOLOGUE ? 'multi-speaker, keep turns balanced among all speakers.' : 'single-speaker, keep flow continuous.'}
+Keep the script tightly aligned to the requested word count and avoid markdown formatting.
+`;
 
   try {
     const response = await ai.models.generateContent({
@@ -54,6 +52,7 @@ export const generateExamQuestions = async (script: string, config: ExamConfig):
   
   const prompt = `Create 5 Multiple Choice Questions based on the following text.
   Target Audience Level: ${config.level}.
+  Include an explicit answer key if requested: ${config.includeAnswerKey}.
   Text:
   "${script}"
   `;
@@ -103,17 +102,17 @@ export const generateExamAudio = async (
   const isMultiSpeaker = config.type === ExamType.DIALOGUE || config.type === ExamType.CONVERSATION;
 
   let speechConfig;
-  
+
   if (isMultiSpeaker) {
      speechConfig = {
         multiSpeakerVoiceConfig: {
           speakerVoiceConfigs: [
             {
-              speaker: 'Speaker A',
+              speaker: 'Speaker 1',
               voiceConfig: { prebuiltVoiceConfig: { voiceName: config.primaryVoice } }
             },
             {
-              speaker: 'Speaker B',
+              speaker: 'Speaker 2',
               voiceConfig: { prebuiltVoiceConfig: { voiceName: config.secondaryVoice } }
             }
           ]
@@ -127,27 +126,20 @@ export const generateExamAudio = async (
     };
   }
 
-  // Construct directions for the model to control emotion and speed
-  const emotion = config.emotionalTone.toLowerCase();
   const speed = config.speechRate.toLowerCase();
-  
-  let promptText = '';
+  const accent = config.customAccentNote ? `${config.accent} (${config.customAccentNote})` : config.accent;
 
-  if (isMultiSpeaker) {
-    promptText = `
-    Generate audio for the following conversation.
-    
-    Directions:
-    - The emotional tone should be ${emotion}.
-    - The speaking rate should be ${speed}.
-    
-    Script:
-    ${script}
-    `;
-  } else {
-    // For single speaker, we wrap it in a direct instruction
-    promptText = `Read the following text with a ${emotion} tone and at a ${speed} pace:\n\n${script}`;
-  }
+  const promptText = `
+  Read the script as a ${config.voiceStylePrimary} voice${isMultiSpeaker ? ` for Speaker 1 and ${config.voiceStyleSecondary} for Speaker 2` : ''}.
+  Accent preference: ${accent}.
+  Insert ${config.pauseStyle.toLowerCase()}.
+  Aim for audio close to ${config.audioDuration} seconds.
+  Speaking rate: ${speed}.
+  Keep speaker labels intact.
+
+  Script:
+  ${script}
+  `;
 
   try {
     const response = await ai.models.generateContent({
