@@ -1,41 +1,40 @@
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { ExamConfig, ExamType, Question } from "../types";
 
-// Helper to get fresh client with current key (safe for re-renders)
 const getAiClient = () => {
-  if (!process.env.API_KEY) {
+  const apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.API_KEY ||
+    (import.meta as any).env?.VITE_GEMINI_API_KEY ||
+    (import.meta as any).env?.GEMINI_API_KEY;
+  if (!apiKey) {
     throw new Error("API Key is missing from environment variables");
   }
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+  return new GoogleGenAI({ apiKey });
+};
+
+const buildSpeakerLabels = (config: ExamConfig) => {
+  if (config.type === ExamType.MONOLOGUE) return ['Narrator'];
+  return config.voiceProfiles.slice(0, config.numberOfSpeakers).map((p, idx) => p.label || `Speaker ${idx + 1}`);
 };
 
 export const generateExamScript = async (config: ExamConfig): Promise<string> => {
   const ai = getAiClient();
-  
-  // Construct a prompt optimized for the 2.5 flash text model
-  let prompt = `You are a professional ESL/EFL exam content creator. 
-  Create a **${config.type}** script for **${config.level}** level students.
-  The topic is: "${config.topic}".
-  
-  The output must be a pure script.
-  `;
+  const speakerLabels = buildSpeakerLabels(config);
 
-  if (config.type === ExamType.DIALOGUE || config.type === ExamType.CONVERSATION) {
-    prompt += `
-    This is a conversation between two people.
-    Use "Speaker A" and "Speaker B" as the labels.
-    Ensure the language difficulty strictly matches ${config.level}.
-    Keep it between 150-300 words.
-    Return ONLY the script text, no markdown formatting like **bold** or titles.
-    `;
-  } else {
-    prompt += `
-    This is a single-speaker text.
-    Ensure the language difficulty strictly matches ${config.level}.
-    Keep it between 150-300 words.
-    Return ONLY the script text, no markdown formatting like **bold** or titles.
-    `;
-  }
+  const speakerFormatting = speakerLabels.map((label) => `${label}:`).join(' ');
+  const toneLine = `Use a ${config.speakerTone.toLowerCase()} tone with ${config.emotionalTone.toLowerCase()} emotion.`;
+  const difficultyLine = `Vocabulary: ${config.vocabularyComplexity}. Sentence structure: ${config.sentenceComplexity}. Listening speed indicator: ${config.speedIndicator}.`;
+
+  const prompt = `You are a professional ESL/EFL exam content creator.
+  Create a ${config.type} script for ${config.level} learners about "${config.topic}".
+  Purpose: ${config.purpose}. Target length: around ${config.wordCount} words.
+  ${toneLine}
+  ${difficultyLine}
+  Include natural pause markers for ${config.pauseStyle.toLowerCase()} pacing and plan for approximately ${config.audioDuration} seconds of audio.
+  Speakers: ${speakerLabels.length} (${speakerFormatting}).
+  Return ONLY the script text with each turn labeled using the speaker names shown above. Avoid markdown or bullet lists.
+  `;
 
   try {
     const response = await ai.models.generateContent({
@@ -51,12 +50,12 @@ export const generateExamScript = async (config: ExamConfig): Promise<string> =>
 
 export const generateExamQuestions = async (script: string, config: ExamConfig): Promise<Question[]> => {
   const ai = getAiClient();
-  
+
   const prompt = `Create 5 Multiple Choice Questions based on the following text.
-  Target Audience Level: ${config.level}.
+  Audience level: ${config.level}.
+  Include an answer key inline with the correct option marked as correctAnswer.
   Text:
-  "${script}"
-  `;
+  "${script}"`;
 
   try {
     const response = await ai.models.generateContent({
@@ -71,8 +70,8 @@ export const generateExamQuestions = async (script: string, config: ExamConfig):
             properties: {
               id: { type: Type.INTEGER },
               text: { type: Type.STRING, description: "The question text" },
-              options: { 
-                type: Type.ARRAY, 
+              options: {
+                type: Type.ARRAY,
                 items: { type: Type.STRING },
                 description: "An array of 4 possible answers"
               },
@@ -86,7 +85,7 @@ export const generateExamQuestions = async (script: string, config: ExamConfig):
 
     const jsonText = response.text;
     if (!jsonText) return [];
-    
+
     return JSON.parse(jsonText) as Question[];
   } catch (error) {
     console.error("Question Generation Error:", error);
@@ -100,54 +99,44 @@ export const generateExamAudio = async (
 ): Promise<string> => {
   const ai = getAiClient();
 
+  const speakerLabels = buildSpeakerLabels(config);
   const isMultiSpeaker = config.type === ExamType.DIALOGUE || config.type === ExamType.CONVERSATION;
 
-  let speechConfig;
-  
+  let speechConfig: any;
+
   if (isMultiSpeaker) {
      speechConfig = {
         multiSpeakerVoiceConfig: {
-          speakerVoiceConfigs: [
-            {
-              speaker: 'Speaker A',
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: config.primaryVoice } }
-            },
-            {
-              speaker: 'Speaker B',
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: config.secondaryVoice } }
-            }
-          ]
+          speakerVoiceConfigs: config.voiceProfiles.slice(0, config.numberOfSpeakers).map((profile, idx) => ({
+            speaker: speakerLabels[idx] || `Speaker ${idx + 1}`,
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: profile.voice } }
+          }))
         }
     };
   } else {
     speechConfig = {
         voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: config.primaryVoice },
+          prebuiltVoiceConfig: { voiceName: config.voiceProfiles[0]?.voice || 'Puck' },
         },
     };
   }
 
-  // Construct directions for the model to control emotion and speed
   const emotion = config.emotionalTone.toLowerCase();
   const speed = config.speechRate.toLowerCase();
-  
-  let promptText = '';
+  const pauseNotes = `Use ${config.pauseStyle.toLowerCase()} pauses between sentences and ${isMultiSpeaker ? 'between speakers' : ''}.`;
+  const accentLine = config.voiceProfiles
+    .slice(0, config.numberOfSpeakers)
+    .map((p, idx) => `${speakerLabels[idx] || `Speaker ${idx + 1}`}: ${p.accent} accent, ${p.voiceStyle} style`)
+    .join(' | ');
 
-  if (isMultiSpeaker) {
-    promptText = `
-    Generate audio for the following conversation.
-    
-    Directions:
-    - The emotional tone should be ${emotion}.
-    - The speaking rate should be ${speed}.
-    
-    Script:
-    ${script}
-    `;
-  } else {
-    // For single speaker, we wrap it in a direct instruction
-    promptText = `Read the following text with a ${emotion} tone and at a ${speed} pace:\n\n${script}`;
-  }
+  const promptText = `Generate audio for the following script.
+  Tone: ${config.speakerTone}. Emotion: ${emotion}. Speaking rate: ${speed}.
+  Target duration around ${config.audioDuration} seconds.
+  Accents & styles: ${accentLine}.
+  ${pauseNotes}
+
+  Script:
+  ${script}`;
 
   try {
     const response = await ai.models.generateContent({

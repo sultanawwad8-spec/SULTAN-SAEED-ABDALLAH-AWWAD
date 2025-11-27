@@ -15,6 +15,12 @@ export enum ExamType {
   LECTURE = 'Lecture',
 }
 
+export enum ExamPurpose {
+  SCHOOL_EXAM = 'School Exam',
+  QUIZ = 'Quiz',
+  PRACTICE = 'Listening Practice',
+}
+
 export enum VoiceName {
   Puck = 'Puck',
   Charon = 'Charon',
@@ -39,6 +45,53 @@ export enum EmotionalTone {
   PROFESSIONAL = 'Professional',
 }
 
+export enum SpeakerTone {
+  NEUTRAL = 'Neutral',
+  ENTHUSIASTIC = 'Enthusiastic',
+  FORMAL = 'Formal',
+  FRIENDLY = 'Friendly',
+  SERIOUS = 'Serious',
+  CHILDLIKE = 'Child-like',
+  TEACHER = 'Teacher tone',
+}
+
+export enum VoiceStyle {
+  MALE = 'Male',
+  FEMALE = 'Female',
+  TEEN = 'Teen',
+  CHILD = 'Child',
+  ROBOTIC = 'Robotic',
+}
+
+export enum AccentOption {
+  AMERICAN = 'American',
+  BRITISH = 'British',
+  AUSTRALIAN = 'Australian',
+  INDIAN = 'Indian',
+  CUSTOM = 'Custom',
+}
+
+export enum ComplexityLevel {
+  BASIC = 'Basic',
+  MODERATE = 'Moderate',
+  ADVANCED = 'Advanced',
+}
+
+export enum PauseStyle {
+  NATURAL = 'Natural',
+  BALANCED = 'Balanced',
+  MINIMAL = 'Minimal',
+}
+
+export interface SpeakerProfile {
+  id: number;
+  label: string;
+  voice: VoiceName;
+  voiceStyle: VoiceStyle;
+  accent: AccentOption;
+  tone: SpeakerTone;
+}
+
 export interface Question {
   id: number;
   text: string;
@@ -50,10 +103,20 @@ export interface ExamConfig {
   topic: string;
   level: DifficultyLevel;
   type: ExamType;
-  primaryVoice: VoiceName;
-  secondaryVoice: VoiceName; // For dialogues
+  wordCount: number;
+  numberOfSpeakers: number;
+  purpose: ExamPurpose;
   speechRate: SpeechRate;
   emotionalTone: EmotionalTone;
+  speakerTone: SpeakerTone;
+  vocabularyComplexity: ComplexityLevel;
+  sentenceComplexity: ComplexityLevel;
+  speedIndicator: SpeechRate;
+  pauseStyle: PauseStyle;
+  audioDuration: number;
+  includeQuestions: boolean;
+  includeAnswerKey: boolean;
+  voiceProfiles: SpeakerProfile[];
 }
 
 export interface GeneratedData {

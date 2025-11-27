@@ -6,14 +6,22 @@ interface ScriptDisplayProps {
   onGenerateAudio: () => void;
   isGeneratingAudio: boolean;
   hasAudio: boolean;
+  onDownloadMp3: () => void;
+  onDownloadWav: () => void;
+  onDownloadTxt: () => void;
+  onDownloadDocx: () => void;
 }
 
-export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({ 
-  script, 
-  setScript, 
-  onGenerateAudio, 
+export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({
+  script,
+  setScript,
+  onGenerateAudio,
   isGeneratingAudio,
-  hasAudio 
+  hasAudio,
+  onDownloadMp3,
+  onDownloadWav,
+  onDownloadTxt,
+  onDownloadDocx
 }) => {
 
   const wordCount = useMemo(() => {
@@ -23,7 +31,7 @@ export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({
 
   return (
     <div className="p-6 h-full flex flex-col bg-white">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-xl font-bold text-slate-800">Exam Script</h2>
@@ -35,19 +43,35 @@ export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({
           </div>
           <p className="text-sm text-slate-500">Edit the text before generating audio</p>
         </div>
-        
+
         {script && (
-          <button
-            onClick={onGenerateAudio}
-            disabled={isGeneratingAudio}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm
-              ${isGeneratingAudio
-                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-              }`}
-          >
-            {isGeneratingAudio ? 'Synthesizing...' : hasAudio ? 'Regenerate Audio' : 'Generate Audio'}
-          </button>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <button
+              onClick={onGenerateAudio}
+              disabled={isGeneratingAudio}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm
+                ${isGeneratingAudio
+                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                  : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                }`}
+            >
+              {isGeneratingAudio ? 'Synthesizing...' : hasAudio ? 'Regenerate Audio' : 'Generate Audio'}
+            </button>
+            <button
+              onClick={onDownloadMp3}
+              disabled={!hasAudio}
+              className={`px-3 py-2 text-sm rounded-lg border border-slate-200 ${hasAudio ? 'bg-white hover:bg-slate-50' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+            >
+              Download MP3
+            </button>
+            <button
+              onClick={onDownloadWav}
+              disabled={!hasAudio}
+              className={`px-3 py-2 text-sm rounded-lg border border-slate-200 ${hasAudio ? 'bg-white hover:bg-slate-50' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+            >
+              Download WAV
+            </button>
+          </div>
         )}
       </div>
 
@@ -69,6 +93,23 @@ export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({
           </div>
         )}
       </div>
+
+      {script && (
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            onClick={onDownloadTxt}
+            className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 bg-slate-50 hover:bg-slate-100"
+          >
+            Export .txt
+          </button>
+          <button
+            onClick={onDownloadDocx}
+            className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 bg-slate-50 hover:bg-slate-100"
+          >
+            Export .docx
+          </button>
+        </div>
+      )}
     </div>
   );
 };

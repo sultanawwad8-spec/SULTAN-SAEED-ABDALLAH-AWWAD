@@ -88,3 +88,61 @@ export function audioBufferToWav(buffer: AudioBuffer): Blob {
     pos += 4;
   }
 }
+
+// Convert AudioBuffer to MP3 (best-effort, falls back to WAV if MediaRecorder is unavailable)
+export async function audioBufferToMp3(buffer: AudioBuffer): Promise<Blob> {
+  if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') {
+    return audioBufferToWav(buffer);
+  }
+
+  const supportedMime = ['audio/mpeg', 'audio/webm', 'audio/ogg'].find((type) =>
+    (MediaRecorder as any).isTypeSupported ? MediaRecorder.isTypeSupported(type) : false
+  );
+
+  if (!supportedMime) {
+    return audioBufferToWav(buffer);
+  }
+
+  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  const destination = audioContext.createMediaStreamDestination();
+  const source = audioContext.createBufferSource();
+  source.buffer = buffer;
+  source.connect(destination);
+
+  return new Promise((resolve, reject) => {
+    const recorder = new MediaRecorder(destination.stream, { mimeType: supportedMime });
+    const chunks: BlobPart[] = [];
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+
+    recorder.onerror = (event) => {
+      console.error('MediaRecorder error', event);
+      resolve(audioBufferToWav(buffer));
+    };
+
+    recorder.onstop = () => {
+      resolve(new Blob(chunks, { type: supportedMime }));
+    };
+
+    recorder.start();
+    source.start(0);
+
+    // Stop after the buffer duration plus a small buffer
+    setTimeout(() => {
+      recorder.stop();
+      source.stop();
+      audioContext.close();
+    }, buffer.duration * 1000 + 300);
+  });
+}
+
+export function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}

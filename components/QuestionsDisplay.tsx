@@ -6,13 +6,15 @@ interface QuestionsDisplayProps {
   onGenerate: () => void;
   isGenerating: boolean;
   hasScript: boolean;
+  showAnswers: boolean;
 }
 
-export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({ 
-  questions, 
-  onGenerate, 
+export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({
+  questions,
+  onGenerate,
   isGenerating,
-  hasScript
+  hasScript,
+  showAnswers
 }) => {
   
   if (!hasScript) {
@@ -66,10 +68,10 @@ export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({
                 </p>
                 <div className="space-y-2 pl-6">
                   {q.options.map((option, i) => {
-                    const isCorrect = option === q.correctAnswer;
+                    const isCorrect = showAnswers && option === q.correctAnswer;
                     return (
-                      <div 
-                        key={i} 
+                      <div
+                        key={i}
                         className={`flex items-center gap-3 p-2 rounded-lg border text-sm transition-colors
                           ${isCorrect ? 'bg-green-50 border-green-200 text-green-800' : 'bg-white border-slate-200 text-slate-600'}`}
                       >

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { audioBufferToWav } from '../utils/audioUtils';
+import { audioBufferToMp3, audioBufferToWav, downloadBlob } from '../utils/audioUtils';
 
 interface AudioPlayerProps {
   audioBuffer: AudioBuffer | null;
@@ -134,15 +134,10 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioBuffer }) => {
     if (wasPlaying) play();
   };
 
-  const handleDownload = () => {
+  const handleDownload = async (format: 'wav' | 'mp3') => {
     if (!audioBuffer) return;
-    const blob = audioBufferToWav(audioBuffer);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'exam_audio.wav';
-    a.click();
-    URL.revokeObjectURL(url);
+    const blob = format === 'mp3' ? await audioBufferToMp3(audioBuffer) : audioBufferToWav(audioBuffer);
+    downloadBlob(blob, `exam_audio.${format}`);
   };
 
   const formatTime = (time: number) => {
@@ -157,12 +152,19 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioBuffer }) => {
     <div className="bg-indigo-900 text-white p-4 rounded-xl shadow-lg flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <span className="text-xs font-medium tracking-wider text-indigo-200 uppercase">Audio Preview</span>
-        <button 
-          onClick={handleDownload}
+        <button
+          onClick={() => handleDownload('wav')}
           className="text-xs flex items-center gap-1 hover:text-indigo-200 transition-colors"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
           Download WAV
+        </button>
+        <button
+          onClick={() => handleDownload('mp3')}
+          className="text-xs flex items-center gap-1 hover:text-indigo-200 transition-colors"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0l3-3m-3 3l-3-3m-5 3a9 9 0 1118 0 9 9 0 01-18 0z"></path></svg>
+          Download MP3
         </button>
       </div>
 
