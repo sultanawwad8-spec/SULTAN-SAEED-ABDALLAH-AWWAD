@@ -1,0 +1,1904 @@
+diff --git a/App.tsx b/App.tsx
+index 50b1459d20ce45244ede3e05e318f0f836656758..984f6fc15d1c7c48f6d97155034351ee07df069d 100644
+--- a/App.tsx
++++ b/App.tsx
+@@ -1,172 +1,305 @@
+-import React, { useState } from 'react';
++import React, { useEffect, useMemo, useState } from 'react';
+ import ControlPanel from './components/ControlPanel';
+ import { ScriptDisplay } from './components/ScriptDisplay';
+ import { QuestionsDisplay } from './components/QuestionsDisplay';
+ import AudioPlayer from './components/AudioPlayer';
+-import { DifficultyLevel, ExamConfig, ExamType, VoiceName, SpeechRate, EmotionalTone, Question } from './types';
++import HistoryPanel from './components/HistoryPanel';
++import {
++  AccentOption,
++  ComplexityLevel,
++  DifficultyLevel,
++  EmotionalTone,
++  ExamConfig,
++  ExamPurpose,
++  ExamType,
++  PauseStyle,
++  Question,
++  SpeakerTone,
++  SpeechRate,
++  VoiceName,
++  VoiceStyle,
++} from './types';
+ import { generateExamScript, generateExamAudio, generateExamQuestions } from './services/geminiService';
+-import { base64ToUint8Array, decodeAudioData } from './utils/audioUtils';
++import {
++  base64ToUint8Array,
++  decodeAudioData,
++  audioBufferToMp3,
++  audioBufferToWav,
++  downloadBlob,
++} from './utils/audioUtils';
++import { downloadDocxLike, downloadText } from './utils/exportUtils';
++
++interface HistoryItem {
++  id: number;
++  timestamp: string;
++  configSnapshot: ExamConfig;
++  script: string;
++  questions: Question[];
++  audioBuffer: AudioBuffer | null;
++}
++
++const defaultVoiceProfiles = [
++  {
++    id: 1,
++    label: 'Speaker 1',
++    voice: VoiceName.Zephyr,
++    voiceStyle: VoiceStyle.MALE,
++    accent: AccentOption.AMERICAN,
++    tone: SpeakerTone.NEUTRAL,
++  },
++  {
++    id: 2,
++    label: 'Speaker 2',
++    voice: VoiceName.Puck,
++    voiceStyle: VoiceStyle.FEMALE,
++    accent: AccentOption.BRITISH,
++    tone: SpeakerTone.FRIENDLY,
++  },
++];
+ 
+ const App: React.FC = () => {
+   const [config, setConfig] = useState<ExamConfig>({
+     topic: '',
+     level: DifficultyLevel.B1,
+     type: ExamType.MONOLOGUE,
+-    primaryVoice: VoiceName.Zephyr,
+-    secondaryVoice: VoiceName.Puck,
++    wordCount: 180,
++    numberOfSpeakers: 1,
++    purpose: ExamPurpose.SCHOOL_EXAM,
+     speechRate: SpeechRate.NORMAL,
+     emotionalTone: EmotionalTone.NEUTRAL,
++    speakerTone: SpeakerTone.NEUTRAL,
++    vocabularyComplexity: ComplexityLevel.MODERATE,
++    sentenceComplexity: ComplexityLevel.MODERATE,
++    speedIndicator: SpeechRate.NORMAL,
++    pauseStyle: PauseStyle.NATURAL,
++    audioDuration: 90,
++    includeQuestions: true,
++    includeAnswerKey: true,
++    voiceProfiles: defaultVoiceProfiles,
+   });
+ 
+   const [activeTab, setActiveTab] = useState<'script' | 'questions'>('script');
+ 
+   const [script, setScript] = useState<string>('');
+   const [questions, setQuestions] = useState<Question[]>([]);
+   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
+-  
++
++  const [history, setHistory] = useState<HistoryItem[]>([]);
++
+   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
+   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+ 
++  useEffect(() => {
++    if (config.type === ExamType.MONOLOGUE && config.numberOfSpeakers !== 1) {
++      setConfig((prev) => ({ ...prev, numberOfSpeakers: 1 }));
++    }
++  }, [config.type]);
++
+   const handleGenerateScript = async () => {
+     setIsGeneratingScript(true);
+     setError(null);
+-    setAudioBuffer(null); // Clear previous audio
+-    setQuestions([]); // Clear previous questions
++    setAudioBuffer(null);
++    setQuestions([]);
+     setActiveTab('script');
+     try {
+       const generatedScript = await generateExamScript(config);
+       setScript(generatedScript);
+     } catch (err: any) {
+       setError(err.message || 'Failed to generate script');
+     } finally {
+       setIsGeneratingScript(false);
+     }
+   };
+ 
+   const handleGenerateQuestions = async () => {
+-    if (!script) return;
++    if (!script || !config.includeQuestions) return;
+     setIsGeneratingQuestions(true);
+     setError(null);
+     try {
+       const generatedQuestions = await generateExamQuestions(script, config);
+       setQuestions(generatedQuestions);
+     } catch (err: any) {
+       setError(err.message || 'Failed to generate questions');
+     } finally {
+       setIsGeneratingQuestions(false);
+     }
+   };
+ 
+   const handleGenerateAudio = async () => {
+     if (!script) return;
+-    
++
+     setIsGeneratingAudio(true);
+     setError(null);
+     try {
+       const base64Audio = await generateExamAudio(script, config);
+       const audioBytes = base64ToUint8Array(base64Audio);
+-      
++
+       const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+       const decodedBuffer = await decodeAudioData(audioBytes, audioContext, 24000);
+-      
++
+       setAudioBuffer(decodedBuffer);
++      addHistory(decodedBuffer);
+     } catch (err: any) {
+       setError(err.message || 'Failed to generate audio');
+     } finally {
+       setIsGeneratingAudio(false);
+     }
+   };
+ 
++  const addHistory = (buffer: AudioBuffer) => {
++    const entry: HistoryItem = {
++      id: Date.now(),
++      timestamp: new Date().toISOString(),
++      configSnapshot: { ...config, voiceProfiles: config.voiceProfiles.map((p) => ({ ...p })) },
++      script,
++      questions,
++      audioBuffer: buffer,
++    };
++    setHistory((prev) => [entry, ...prev].slice(0, 8));
++  };
++
++  const handleDownloadAudio = async (format: 'mp3' | 'wav') => {
++    if (!audioBuffer) return;
++    const blob = format === 'mp3' ? await audioBufferToMp3(audioBuffer) : audioBufferToWav(audioBuffer);
++    downloadBlob(blob, `listening-exam.${format}`);
++  };
++
++  const handleDownloadScriptTxt = () => {
++    if (!script) return;
++    downloadText(script, 'listening-exam.txt');
++  };
++
++  const handleDownloadDocx = () => {
++    if (!script) return;
++    downloadDocxLike(script, config.includeQuestions ? questions : [], config.includeAnswerKey);
++  };
++
++  const handleLoadHistory = (item: HistoryItem) => {
++    setConfig(item.configSnapshot);
++    setScript(item.script);
++    setQuestions(item.questions);
++    setAudioBuffer(item.audioBuffer);
++    setActiveTab('script');
++  };
++
++  const menus = useMemo(
++    () => [
++      'Generate New Audio',
++      'Choose Type',
++      'Set Parameters',
++      'Preview Script',
++      'Generate Audio',
++      'Download Section',
++      'History of Generated Audios',
++    ],
++    []
++  );
++
+   return (
+     <div className="min-h-screen bg-slate-50 p-4 md:p-8 flex flex-col h-screen overflow-hidden">
+       {/* Header */}
+-      <header className="mb-6 flex-none">
++      <header className="mb-4 flex-none">
+         <div className="flex items-center gap-3">
+           <div className="bg-indigo-600 p-2 rounded-lg">
+             <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+             </svg>
+           </div>
+           <div>
+             <h1 className="text-2xl font-bold text-slate-900">Listening Exam Generator</h1>
+-            <p className="text-sm text-slate-500">Powered by Gemini 2.5</p>
++            <p className="text-sm text-slate-500">Monologues, dialogues, and conversations with instant TTS</p>
+           </div>
+         </div>
++        <div className="mt-3 flex flex-wrap gap-2">
++          {menus.map((item) => (
++            <span
++              key={item}
++              className="text-xs bg-white border border-slate-200 px-3 py-1 rounded-full text-slate-600 shadow-sm"
++            >
++              {item}
++            </span>
++          ))}
++        </div>
+       </header>
+ 
+       {/* Main Content */}
+       <main className="flex-1 flex flex-col lg:flex-row gap-6 h-full overflow-hidden min-h-0">
+-        
+         {/* Left Column: Controls */}
+-        <div className="w-full lg:w-1/3 flex-none overflow-y-auto">
+-          <ControlPanel 
+-            config={config} 
+-            setConfig={setConfig} 
++        <div className="w-full lg:w-1/3 flex-none overflow-y-auto space-y-4">
++          <ControlPanel
++            config={config}
++            setConfig={setConfig}
+             onGenerate={handleGenerateScript}
+             isGenerating={isGeneratingScript}
+           />
++          <HistoryPanel history={history} onLoad={handleLoadHistory} />
+         </div>
+ 
+         {/* Right Column: Output */}
+         <div className="w-full lg:w-2/3 flex flex-col gap-4 overflow-hidden min-h-0 h-full">
+           {error && (
+             <div className="bg-red-50 text-red-700 p-4 rounded-xl border border-red-200 flex items-center gap-3 animate-pulse">
+               <svg className="w-5 h-5 flex-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+               {error}
+             </div>
+           )}
+ 
+           {/* Tabs */}
+           <div className="flex-1 flex flex-col overflow-hidden min-h-0 bg-white rounded-2xl shadow-sm border border-slate-200">
+-             <div className="flex border-b border-slate-200">
+-                <button 
+-                  onClick={() => setActiveTab('script')}
+-                  className={`flex-1 py-3 text-sm font-medium transition-colors relative ${activeTab === 'script' ? 'text-indigo-600 bg-white' : 'text-slate-500 bg-slate-50 hover:bg-slate-100'}`}
+-                >
+-                  Exam Script
+-                  {activeTab === 'script' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600"></div>}
+-                </button>
+-                <button 
+-                  onClick={() => setActiveTab('questions')}
+-                  className={`flex-1 py-3 text-sm font-medium transition-colors relative ${activeTab === 'questions' ? 'text-indigo-600 bg-white' : 'text-slate-500 bg-slate-50 hover:bg-slate-100'}`}
+-                >
+-                  MC Questions {questions.length > 0 && `(${questions.length})`}
+-                  {activeTab === 'questions' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600"></div>}
+-                </button>
+-             </div>
+-
+-             <div className="flex-1 overflow-hidden min-h-0">
+-               <div className={`h-full ${activeTab === 'script' ? 'block' : 'hidden'}`}>
+-                  <ScriptDisplay 
+-                    script={script} 
+-                    setScript={setScript}
+-                    onGenerateAudio={handleGenerateAudio}
+-                    isGeneratingAudio={isGeneratingAudio}
+-                    hasAudio={!!audioBuffer}
+-                  />
+-               </div>
+-               <div className={`h-full ${activeTab === 'questions' ? 'block' : 'hidden'}`}>
+-                  <QuestionsDisplay 
+-                    questions={questions}
+-                    onGenerate={handleGenerateQuestions}
+-                    isGenerating={isGeneratingQuestions}
+-                    hasScript={!!script}
+-                  />
+-               </div>
+-             </div>
++            <div className="flex border-b border-slate-200">
++              <button
++                onClick={() => setActiveTab('script')}
++                className={`flex-1 py-3 text-sm font-medium transition-colors relative ${activeTab === 'script' ? 'text-indigo-600 bg-white' : 'text-slate-500 bg-slate-50 hover:bg-slate-100'}`}
++              >
++                Exam Script
++                {activeTab === 'script' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600"></div>}
++              </button>
++              <button
++                onClick={() => setActiveTab('questions')}
++                className={`flex-1 py-3 text-sm font-medium transition-colors relative ${activeTab === 'questions' ? 'text-indigo-600 bg-white' : 'text-slate-500 bg-slate-50 hover:bg-slate-100'}`}
++              >
++                MC Questions {questions.length > 0 && `(${questions.length})`}
++                {activeTab === 'questions' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-indigo-600"></div>}
++              </button>
++            </div>
++
++            <div className="flex-1 overflow-hidden min-h-0">
++              <div className={`h-full ${activeTab === 'script' ? 'block' : 'hidden'}`}>
++                <ScriptDisplay
++                  script={script}
++                  setScript={setScript}
++                  onGenerateAudio={handleGenerateAudio}
++                  isGeneratingAudio={isGeneratingAudio}
++                  hasAudio={!!audioBuffer}
++                  onDownloadMp3={() => handleDownloadAudio('mp3')}
++                  onDownloadWav={() => handleDownloadAudio('wav')}
++                  onDownloadTxt={handleDownloadScriptTxt}
++                  onDownloadDocx={handleDownloadDocx}
++                />
++              </div>
++              <div className={`h-full ${activeTab === 'questions' ? 'block' : 'hidden'}`}>
++                <QuestionsDisplay
++                  questions={questions}
++                  onGenerate={handleGenerateQuestions}
++                  isGenerating={isGeneratingQuestions}
++                  hasScript={!!script}
++                  showAnswers={config.includeAnswerKey}
++                />
++              </div>
++            </div>
+           </div>
+ 
+           {audioBuffer && (
+             <div className="flex-none">
+               <AudioPlayer audioBuffer={audioBuffer} />
+             </div>
+           )}
+         </div>
+       </main>
+     </div>
+   );
+ };
+ 
+-export default App;
+\ No newline at end of file
++export default App;
+diff --git a/README.md b/README.md
+index 7f153e90d1854ba275be9ee81c0f9a2d8032fe44..8e25487851d7bfa41681465d3a036bee25704da2 100644
+--- a/README.md
++++ b/README.md
+@@ -1,20 +1,55 @@
+ <div align="center">
+ <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+ </div>
+ 
+ # Run and deploy your AI Studio app
+ 
+ This contains everything you need to run your app locally.
+ 
+ View your app in AI Studio: https://ai.studio/apps/drive/1MJsCx_qiTc8eXvPka2SvZmh9bIhtRvaf
+ 
+ ## Run Locally
+ 
+ **Prerequisites:**  Node.js
+ 
+ 
+ 1. Install dependencies:
+    `npm install`
+ 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+ 3. Run the app:
+    `npm run dev`
++
++## App Architecture
++
++- **Frontend**: React + Vite single-page interface with dedicated panels for configuration, preview, downloads, and history.
++- **Services**: `services/geminiService.ts` wraps Gemini text + TTS endpoints for script, MCQ, and audio generation.
++- **State**: Managed in `App.tsx`, including exam configuration, script, questions, audio buffers, and a local history list of generated audios.
++- **Utilities**: Audio helpers for decoding PCM, WAV/MP3 export, and text/Docx-like downloads.
++
++### API Usage
++- **Text Generation**: `gemini-2.5-flash` for scripts and MCQs with JSON schema enforcement for question objects.
++- **Text-to-Speech**: `gemini-2.5-flash-preview-tts` with multi-speaker voice configs, speed, tone, and pause controls.
++
++### UI Layout & Menus
++- Header callouts enumerate the required menus: Generate New Audio, Choose Type, Set Parameters, Preview Script, Generate Audio, Download Section, and History of Generated Audios.
++- Left column: Control Panel for script/audio parameters and the history list.
++- Right column: Tabs for script preview/downloads and MC questions, plus an audio player for immediate playback.
++
++### Backend Logic (in the browser)
++- Script prompt construction honors topic, level, target word count, purpose, tone, vocabulary/sentence complexity, pause style, target duration, and speaker labeling.
++- Audio prompt construction applies tone/emotion, pause notes, target duration, and accent/style metadata for each speaker voice.
++- Question generation returns five MCQs with an answer key when requested.
++
++### Data & Persistence
++- Lightweight history is stored in memory during the session (no external database) and captures script, config snapshot, questions, and audio buffer for quick reloads.
++
++### Recommended Libraries & Frameworks
++- **React + Vite** for fast UI development.
++- **@google/genai** for Gemini text and TTS.
++- Native browser `MediaRecorder` + Web Audio API for WAV/MP3 exporting without extra codecs.
++
++### Deployment
++1. Create `.env` or `.env.local` with `VITE_GEMINI_API_KEY` (or `GEMINI_API_KEY`).
++2. Install dependencies: `npm install` (or use a private npm mirror if direct registry access is restricted).
++3. Build for production: `npm run build`.
++4. Serve `dist/` with any static host (Vercel, Netlify, Cloudflare Pages, or an S3/CloudFront bucket).
+diff --git a/components/AudioPlayer.tsx b/components/AudioPlayer.tsx
+index 24303d8304b0199bdad40e32965d444c23f2448b..217a63eea287dbcb7329aa0079b495b6a286eb40 100644
+--- a/components/AudioPlayer.tsx
++++ b/components/AudioPlayer.tsx
+@@ -1,27 +1,27 @@
+ import React, { useEffect, useRef, useState } from 'react';
+-import { audioBufferToWav } from '../utils/audioUtils';
++import { audioBufferToMp3, audioBufferToWav, downloadBlob } from '../utils/audioUtils';
+ 
+ interface AudioPlayerProps {
+   audioBuffer: AudioBuffer | null;
+ }
+ 
+ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioBuffer }) => {
+   const [isPlaying, setIsPlaying] = useState(false);
+   const [currentTime, setCurrentTime] = useState(0);
+   const [duration, setDuration] = useState(0);
+   
+   const audioContextRef = useRef<AudioContext | null>(null);
+   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+   const startTimeRef = useRef<number>(0);
+   const pauseTimeRef = useRef<number>(0);
+   const animationFrameRef = useRef<number>(0);
+ 
+   useEffect(() => {
+     if (audioBuffer) {
+       setDuration(audioBuffer.duration);
+       // Reset state when new buffer arrives
+       stop();
+       setCurrentTime(0);
+       pauseTimeRef.current = 0;
+     }
+   }, [audioBuffer]);
+@@ -112,80 +112,82 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ audioBuffer }) => {
+   const stop = () => {
+     if (sourceRef.current) {
+         try {
+             sourceRef.current.stop();
+         } catch (e) { /* ignore if already stopped */ }
+         sourceRef.current = null;
+     }
+     if (animationFrameRef.current) {
+         cancelAnimationFrame(animationFrameRef.current);
+     }
+     setIsPlaying(false);
+   };
+ 
+   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+     const newTime = parseFloat(e.target.value);
+     const wasPlaying = isPlaying;
+     
+     if (wasPlaying) pause();
+     
+     setCurrentTime(newTime);
+     pauseTimeRef.current = newTime;
+     
+     if (wasPlaying) play();
+   };
+ 
+-  const handleDownload = () => {
++  const handleDownload = async (format: 'wav' | 'mp3') => {
+     if (!audioBuffer) return;
+-    const blob = audioBufferToWav(audioBuffer);
+-    const url = URL.createObjectURL(blob);
+-    const a = document.createElement('a');
+-    a.href = url;
+-    a.download = 'exam_audio.wav';
+-    a.click();
+-    URL.revokeObjectURL(url);
++    const blob = format === 'mp3' ? await audioBufferToMp3(audioBuffer) : audioBufferToWav(audioBuffer);
++    downloadBlob(blob, `exam_audio.${format}`);
+   };
+ 
+   const formatTime = (time: number) => {
+     const minutes = Math.floor(time / 60);
+     const seconds = Math.floor(time % 60);
+     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+   };
+ 
+   if (!audioBuffer) return null;
+ 
+   return (
+     <div className="bg-indigo-900 text-white p-4 rounded-xl shadow-lg flex flex-col gap-3">
+       <div className="flex items-center justify-between">
+         <span className="text-xs font-medium tracking-wider text-indigo-200 uppercase">Audio Preview</span>
+-        <button 
+-          onClick={handleDownload}
++        <button
++          onClick={() => handleDownload('wav')}
+           className="text-xs flex items-center gap-1 hover:text-indigo-200 transition-colors"
+         >
+           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+           Download WAV
+         </button>
++        <button
++          onClick={() => handleDownload('mp3')}
++          className="text-xs flex items-center gap-1 hover:text-indigo-200 transition-colors"
++        >
++          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0l3-3m-3 3l-3-3m-5 3a9 9 0 1118 0 9 9 0 01-18 0z"></path></svg>
++          Download MP3
++        </button>
+       </div>
+ 
+       <div className="flex items-center gap-4">
+         <button 
+           onClick={isPlaying ? pause : play}
+           className="w-10 h-10 flex items-center justify-center rounded-full bg-white text-indigo-900 hover:bg-indigo-50 transition-colors"
+         >
+           {isPlaying ? (
+              <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+           ) : (
+              <svg className="w-5 h-5 fill-current translate-x-0.5" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+           )}
+         </button>
+ 
+         <div className="flex-1">
+           <input
+             type="range"
+             min="0"
+             max={duration || 0}
+             step="0.1"
+             value={currentTime}
+             onChange={handleSeek}
+             className="w-full h-1.5 bg-indigo-700 rounded-lg appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-full"
+           />
+           <div className="flex justify-between text-xs text-indigo-300 mt-1 font-mono">
+diff --git a/components/ControlPanel.tsx b/components/ControlPanel.tsx
+index c34ba65a17687b10029f0988fe5faf3d7f0e50f8..5757b42c71a9efd41a91bb76378802292739e442 100644
+--- a/components/ControlPanel.tsx
++++ b/components/ControlPanel.tsx
+@@ -1,194 +1,435 @@
+-import React from 'react';
+-import { DifficultyLevel, ExamConfig, ExamType, VoiceName, SpeechRate, EmotionalTone } from '../types';
++import React, { useMemo } from 'react';
++import {
++  AccentOption,
++  ComplexityLevel,
++  DifficultyLevel,
++  EmotionalTone,
++  ExamConfig,
++  ExamPurpose,
++  ExamType,
++  PauseStyle,
++  SpeakerTone,
++  SpeechRate,
++  VoiceName,
++  VoiceStyle,
++} from '../types';
+ 
+ interface ControlPanelProps {
+   config: ExamConfig;
+   setConfig: React.Dispatch<React.SetStateAction<ExamConfig>>;
+   onGenerate: () => void;
+   isGenerating: boolean;
+ }
+ 
+ const ControlPanel: React.FC<ControlPanelProps> = ({ config, setConfig, onGenerate, isGenerating }) => {
+-  
+   const isMultiSpeaker = config.type === ExamType.DIALOGUE || config.type === ExamType.CONVERSATION;
+ 
+-  // Generic handler for selects
+-  const handleChange = (field: keyof ExamConfig, value: string) => {
+-    setConfig(prev => ({ ...prev, [field]: value }));
++  const handleChange = (field: keyof ExamConfig, value: any) => {
++    setConfig((prev) => ({ ...prev, [field]: value }));
++  };
++
++  const handleSpeakerCountChange = (value: number) => {
++    const min = isMultiSpeaker ? 2 : 1;
++    const safeValue = Math.max(min, Math.min(4, value));
++    setConfig((prev) => {
++      let voiceProfiles = [...prev.voiceProfiles];
++      if (voiceProfiles.length < safeValue) {
++        const needed = safeValue - voiceProfiles.length;
++        const additions = Array.from({ length: needed }).map((_, idx) => ({
++          id: Date.now() + idx,
++          label: `Speaker ${voiceProfiles.length + idx + 1}`,
++          voice: VoiceName.Zephyr,
++          voiceStyle: VoiceStyle.MALE,
++          accent: AccentOption.AMERICAN,
++          tone: prev.speakerTone,
++        }));
++        voiceProfiles = [...voiceProfiles, ...additions];
++      } else if (voiceProfiles.length > safeValue) {
++        voiceProfiles = voiceProfiles.slice(0, safeValue);
++      }
++      return { ...prev, numberOfSpeakers: safeValue, voiceProfiles };
++    });
++  };
++
++  const speakerProfiles = useMemo(() => {
++    const min = isMultiSpeaker ? 2 : 1;
++    const required = Math.max(min, config.numberOfSpeakers);
++    const profiles = [...config.voiceProfiles];
++    while (profiles.length < required) {
++      profiles.push({
++        id: Date.now() + profiles.length,
++        label: `Speaker ${profiles.length + 1}`,
++        voice: VoiceName.Zephyr,
++        voiceStyle: VoiceStyle.MALE,
++        accent: AccentOption.AMERICAN,
++        tone: config.speakerTone,
++      });
++    }
++    return profiles.slice(0, required);
++  }, [config.voiceProfiles, config.numberOfSpeakers, config.speakerTone, isMultiSpeaker]);
++
++  const updateProfile = (index: number, field: 'voice' | 'voiceStyle' | 'accent' | 'tone', value: string) => {
++    setConfig((prev) => {
++      const profiles = [...prev.voiceProfiles];
++      if (!profiles[index]) return prev;
++      profiles[index] = { ...profiles[index], [field]: value };
++      return { ...prev, voiceProfiles: profiles };
++    });
+   };
+ 
+   return (
+     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-full flex flex-col gap-6">
+       <div>
+         <h2 className="text-2xl font-bold text-slate-800 mb-1">Configuration</h2>
+-        <p className="text-sm text-slate-500">Setup your exam parameters</p>
++        <p className="text-sm text-slate-500">Set parameters for the listening exam and audio</p>
+       </div>
+ 
+       <div className="flex flex-col gap-5 overflow-y-auto pr-2 custom-scrollbar">
+         {/* Section: Content Settings */}
+         <div className="space-y-4">
+           <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Content Generation</h3>
+-          
+-          {/* Topic Input */}
+-          <div>
+-            <label className="block text-sm font-medium text-slate-700 mb-1">Topic</label>
+-            <input
+-              type="text"
+-              value={config.topic}
+-              onChange={(e) => handleChange('topic', e.target.value)}
+-              placeholder="e.g. Climate Change, Ordering Coffee..."
+-              className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
+-            />
+-          </div>
+ 
+-          {/* Level Select */}
+-          <div>
+-            <label className="block text-sm font-medium text-slate-700 mb-1">Difficulty Level</label>
+-            <div className="relative">
+-              <select
+-                value={config.level}
+-                onChange={(e) => handleChange('level', e.target.value)}
+-                className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-lg appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
+-              >
+-                {Object.values(DifficultyLevel).map((level) => (
+-                  <option key={level} value={level}>{level}</option>
+-                ))}
+-              </select>
+-              <ArrowIcon />
++          <div className="grid grid-cols-2 gap-4">
++            <div className="col-span-2">
++              <label className="block text-sm font-medium text-slate-700 mb-1">Topic</label>
++              <input
++                type="text"
++                value={config.topic}
++                onChange={(e) => handleChange('topic', e.target.value)}
++                placeholder="e.g. Climate Change, Ordering Coffee..."
++                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all"
++              />
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Difficulty Level</label>
++              <div className="relative">
++                <select
++                  value={config.level}
++                  onChange={(e) => handleChange('level', e.target.value)}
++                  className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-lg appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(DifficultyLevel).map((level) => (
++                    <option key={level} value={level}>{level}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
+             </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Exam Type</label>
++              <div className="relative">
++                <select
++                  value={config.type}
++                  onChange={(e) => handleChange('type', e.target.value)}
++                  className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-lg appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(ExamType).map((type) => (
++                    <option key={type} value={type}>{type}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Target Word Count</label>
++              <input
++                type="number"
++                min={80}
++                max={600}
++                value={config.wordCount}
++                onChange={(e) => handleChange('wordCount', Number(e.target.value))}
++                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++              />
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Purpose</label>
++              <div className="relative">
++                <select
++                  value={config.purpose}
++                  onChange={(e) => handleChange('purpose', e.target.value)}
++                  className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-lg appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(ExamPurpose).map((purpose) => (
++                    <option key={purpose} value={purpose}>{purpose}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
++            </div>
++            {isMultiSpeaker && (
++              <div>
++                <label className="block text-sm font-medium text-slate-700 mb-1">Number of Speakers</label>
++                <input
++                  type="number"
++                  min={2}
++                  max={4}
++                  value={config.numberOfSpeakers}
++                  onChange={(e) => handleSpeakerCountChange(Number(e.target.value))}
++                  className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++                />
++                <p className="text-xs text-slate-500 mt-1">Supports 2-4 speakers for dialogues and conversations</p>
++              </div>
++            )}
+           </div>
+ 
+-          {/* Type Select */}
+-          <div>
+-            <label className="block text-sm font-medium text-slate-700 mb-1">Exam Type</label>
+-            <div className="relative">
+-              <select
+-                value={config.type}
+-                onChange={(e) => handleChange('type', e.target.value)}
+-                className="w-full px-4 py-2 bg-slate-50 border border-slate-300 rounded-lg appearance-none focus:ring-2 focus:ring-indigo-500 outline-none"
+-              >
+-                {Object.values(ExamType).map((type) => (
+-                  <option key={type} value={type}>{type}</option>
+-                ))}
+-              </select>
+-              <ArrowIcon />
++          <div className="grid grid-cols-2 gap-4">
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Speaker Tone</label>
++              <div className="relative">
++                <select
++                  value={config.speakerTone}
++                  onChange={(e) => handleChange('speakerTone', e.target.value)}
++                  className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(SpeakerTone).map((tone) => (
++                    <option key={tone} value={tone}>{tone}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Narration Emotion</label>
++              <div className="relative">
++                <select
++                  value={config.emotionalTone}
++                  onChange={(e) => handleChange('emotionalTone', e.target.value)}
++                  className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(EmotionalTone).map((tone) => (
++                    <option key={tone} value={tone}>{tone}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Vocabulary Complexity</label>
++              <div className="relative">
++                <select
++                  value={config.vocabularyComplexity}
++                  onChange={(e) => handleChange('vocabularyComplexity', e.target.value)}
++                  className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(ComplexityLevel).map((level) => (
++                    <option key={level} value={level}>{level}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Sentence Structure</label>
++              <div className="relative">
++                <select
++                  value={config.sentenceComplexity}
++                  onChange={(e) => handleChange('sentenceComplexity', e.target.value)}
++                  className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(ComplexityLevel).map((level) => (
++                    <option key={level} value={level}>{level}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Listening Speed Indicator</label>
++              <div className="relative">
++                <select
++                  value={config.speedIndicator}
++                  onChange={(e) => handleChange('speedIndicator', e.target.value)}
++                  className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++                >
++                  {Object.values(SpeechRate).map((rate) => (
++                    <option key={rate} value={rate}>{rate}</option>
++                  ))}
++                </select>
++                <ArrowIcon />
++              </div>
+             </div>
+           </div>
+         </div>
+ 
+         <div className="h-px bg-slate-100 my-1"></div>
+ 
+         {/* Section: Audio Settings */}
+         <div className="space-y-4">
+-          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Audio Settings</h3>
++          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Audio Generation</h3>
+ 
+           <div className="grid grid-cols-2 gap-4">
+-            {/* Speech Rate */}
+             <div>
+               <label className="block text-sm font-medium text-slate-700 mb-1">Speed</label>
+               <div className="relative">
+                 <select
+                   value={config.speechRate}
+                   onChange={(e) => handleChange('speechRate', e.target.value)}
+                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg appearance-none focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                 >
+                   {Object.values(SpeechRate).map((rate) => (
+                     <option key={rate} value={rate}>{rate}</option>
+                   ))}
+                 </select>
+                 <ArrowIcon />
+               </div>
+             </div>
+-
+-            {/* Emotional Tone */}
+             <div>
+-              <label className="block text-sm font-medium text-slate-700 mb-1">Tone</label>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Pause Style</label>
+               <div className="relative">
+                 <select
+-                  value={config.emotionalTone}
+-                  onChange={(e) => handleChange('emotionalTone', e.target.value)}
++                  value={config.pauseStyle}
++                  onChange={(e) => handleChange('pauseStyle', e.target.value)}
+                   className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg appearance-none focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+                 >
+-                  {Object.values(EmotionalTone).map((tone) => (
+-                    <option key={tone} value={tone}>{tone}</option>
++                  {Object.values(PauseStyle).map((p) => (
++                    <option key={p} value={p}>{p}</option>
+                   ))}
+                 </select>
+                 <ArrowIcon />
+               </div>
+             </div>
+-          </div>
+-
+-          {/* Voice Selection */}
+-          <div className="space-y-3">
+             <div>
+-              <label className="block text-sm font-medium text-slate-700 mb-1">
+-                {isMultiSpeaker ? 'Speaker A Voice' : 'Voice Model'}
+-              </label>
+-              <div className="relative">
+-                <select
+-                  value={config.primaryVoice}
+-                  onChange={(e) => handleChange('primaryVoice', e.target.value)}
+-                  className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+-                >
+-                  {Object.values(VoiceName).map((voice) => (
+-                    <option key={voice} value={voice}>{voice}</option>
+-                  ))}
+-                </select>
+-                <ArrowIcon />
++              <label className="block text-sm font-medium text-slate-700 mb-1">Target Duration (seconds)</label>
++              <input
++                type="number"
++                min={30}
++                max={600}
++                value={config.audioDuration}
++                onChange={(e) => handleChange('audioDuration', Number(e.target.value))}
++                className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
++              />
++            </div>
++            <div>
++              <label className="block text-sm font-medium text-slate-700 mb-1">Include Questions & Answer Key</label>
++              <div className="flex items-center gap-3 text-sm">
++                <label className="flex items-center gap-2">
++                  <input
++                    type="checkbox"
++                    checked={config.includeQuestions}
++                    onChange={(e) => handleChange('includeQuestions', e.target.checked)}
++                  />
++                  <span>Questions</span>
++                </label>
++                <label className="flex items-center gap-2">
++                  <input
++                    type="checkbox"
++                    checked={config.includeAnswerKey}
++                    onChange={(e) => handleChange('includeAnswerKey', e.target.checked)}
++                  />
++                  <span>Answer key</span>
++                </label>
+               </div>
+             </div>
++          </div>
+ 
+-            {isMultiSpeaker && (
+-              <div>
+-                <label className="block text-sm font-medium text-slate-700 mb-1">Speaker B Voice</label>
+-                <div className="relative">
+-                  <select
+-                    value={config.secondaryVoice}
+-                    onChange={(e) => handleChange('secondaryVoice', e.target.value)}
+-                    className="w-full px-4 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none"
+-                  >
+-                    {Object.values(VoiceName).map((voice) => (
+-                      <option key={voice} value={voice}>{voice}</option>
+-                    ))}
+-                  </select>
+-                  <ArrowIcon />
++          <div className="space-y-3">
++            <p className="text-sm font-semibold text-slate-700">Voices, styles, and accents</p>
++            <div className="grid grid-cols-1 gap-3">
++              {speakerProfiles.map((profile, index) => (
++                <div key={profile.id} className="p-3 rounded-xl bg-slate-50 border border-slate-200">
++                  <div className="flex items-center justify-between mb-2">
++                    <p className="font-semibold text-slate-800">{profile.label}</p>
++                    <span className="text-xs text-slate-500">{isMultiSpeaker ? 'Speaker' : 'Narrator'}</span>
++                  </div>
++                  <div className="grid grid-cols-2 gap-3">
++                    <div>
++                      <label className="block text-xs uppercase tracking-wide text-slate-500 mb-1">Voice</label>
++                      <div className="relative">
++                        <select
++                          value={profile.voice}
++                          onChange={(e) => updateProfile(index, 'voice', e.target.value)}
++                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
++                        >
++                          {Object.values(VoiceName).map((voice) => (
++                            <option key={voice} value={voice}>{voice}</option>
++                          ))}
++                        </select>
++                        <ArrowIcon />
++                      </div>
++                    </div>
++                    <div>
++                      <label className="block text-xs uppercase tracking-wide text-slate-500 mb-1">Voice Style</label>
++                      <div className="relative">
++                        <select
++                          value={profile.voiceStyle}
++                          onChange={(e) => updateProfile(index, 'voiceStyle', e.target.value)}
++                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
++                        >
++                          {Object.values(VoiceStyle).map((style) => (
++                            <option key={style} value={style}>{style}</option>
++                          ))}
++                        </select>
++                        <ArrowIcon />
++                      </div>
++                    </div>
++                    <div>
++                      <label className="block text-xs uppercase tracking-wide text-slate-500 mb-1">Accent</label>
++                      <div className="relative">
++                        <select
++                          value={profile.accent}
++                          onChange={(e) => updateProfile(index, 'accent', e.target.value)}
++                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
++                        >
++                          {Object.values(AccentOption).map((accent) => (
++                            <option key={accent} value={accent}>{accent}</option>
++                          ))}
++                        </select>
++                        <ArrowIcon />
++                      </div>
++                    </div>
++                    <div>
++                      <label className="block text-xs uppercase tracking-wide text-slate-500 mb-1">Tone</label>
++                      <div className="relative">
++                        <select
++                          value={profile.tone}
++                          onChange={(e) => updateProfile(index, 'tone', e.target.value)}
++                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
++                        >
++                          {Object.values(SpeakerTone).map((tone) => (
++                            <option key={tone} value={tone}>{tone}</option>
++                          ))}
++                        </select>
++                        <ArrowIcon />
++                      </div>
++                    </div>
++                  </div>
+                 </div>
+-              </div>
+-            )}
++              ))}
++            </div>
+           </div>
+         </div>
+       </div>
+ 
+       <div className="mt-auto pt-4">
+         <button
+           onClick={onGenerate}
+           disabled={isGenerating || !config.topic}
+           className={`w-full py-3 px-6 rounded-xl text-white font-semibold shadow-md transition-all transform active:scale-[0.98]
+-            ${isGenerating || !config.topic 
+-              ? 'bg-slate-300 cursor-not-allowed shadow-none' 
++            ${isGenerating || !config.topic
++              ? 'bg-slate-300 cursor-not-allowed shadow-none'
+               : 'bg-indigo-600 hover:bg-indigo-700 hover:shadow-lg'}`}
+         >
+           {isGenerating ? (
+             <span className="flex items-center justify-center gap-2">
+               <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+               </svg>
+               Generating Script...
+             </span>
+           ) : (
+             "Generate Exam"
+           )}
+         </button>
+       </div>
+     </div>
+   );
+ };
+ 
+ const ArrowIcon = () => (
+   <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-500">
+     <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+   </div>
+ );
+ 
+-export default ControlPanel;
+\ No newline at end of file
++export default ControlPanel;
+diff --git a/components/HistoryPanel.tsx b/components/HistoryPanel.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..f3b0b2586f0f30e95a6151572f6c888a47107a50
+--- /dev/null
++++ b/components/HistoryPanel.tsx
+@@ -0,0 +1,57 @@
++import React from 'react';
++import { ExamConfig, Question } from '../types';
++
++interface HistoryItem {
++  id: number;
++  timestamp: string;
++  configSnapshot: ExamConfig;
++  script: string;
++  questions: Question[];
++  audioBuffer: AudioBuffer | null;
++}
++
++interface HistoryPanelProps {
++  history: HistoryItem[];
++  onLoad: (item: HistoryItem) => void;
++}
++
++const HistoryPanel: React.FC<HistoryPanelProps> = ({ history, onLoad }) => {
++  return (
++    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200">
++      <div className="flex items-center justify-between mb-3">
++        <div>
++          <h3 className="text-lg font-semibold text-slate-800">History of Generated Audios</h3>
++          <p className="text-xs text-slate-500">Reload previous scripts and audio mixes</p>
++        </div>
++        <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{history.length}</span>
++      </div>
++
++      {history.length === 0 ? (
++        <div className="text-sm text-slate-500 bg-slate-50 border border-dashed border-slate-200 rounded-xl p-4 text-center">
++          No audio history yet.
++        </div>
++      ) : (
++        <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
++          {history.map((item) => (
++            <div key={item.id} className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
++              <div>
++                <p className="font-semibold text-slate-800">{item.configSnapshot.topic || 'Untitled topic'}</p>
++                <p className="text-xs text-slate-500">
++                  {item.configSnapshot.type} · {new Date(item.timestamp).toLocaleTimeString()} · {item.script.split(/\s+/).length} words
++                </p>
++              </div>
++              <button
++                onClick={() => onLoad(item)}
++                className="px-3 py-2 text-xs font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700"
++              >
++                Load
++              </button>
++            </div>
++          ))}
++        </div>
++      )}
++    </div>
++  );
++};
++
++export default HistoryPanel;
+diff --git a/components/QuestionsDisplay.tsx b/components/QuestionsDisplay.tsx
+index 874c1bde5a454e3a65d498d2c5ffc13c5d3021ae..3508511996cc4983d704a2e18818f4f8db50b36b 100644
+--- a/components/QuestionsDisplay.tsx
++++ b/components/QuestionsDisplay.tsx
+@@ -1,40 +1,42 @@
+ import React from 'react';
+ import { Question } from '../types';
+ 
+ interface QuestionsDisplayProps {
+   questions: Question[];
+   onGenerate: () => void;
+   isGenerating: boolean;
+   hasScript: boolean;
++  showAnswers: boolean;
+ }
+ 
+-export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({ 
+-  questions, 
+-  onGenerate, 
++export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({
++  questions,
++  onGenerate,
+   isGenerating,
+-  hasScript
++  hasScript,
++  showAnswers
+ }) => {
+   
+   if (!hasScript) {
+     return (
+       <div className="flex flex-col items-center justify-center h-full p-8 text-center text-slate-400 bg-white rounded-2xl border border-slate-200">
+         <svg className="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+         </svg>
+         <p className="text-lg font-medium">No script available</p>
+         <p className="text-sm">Generate a script first to create questions.</p>
+       </div>
+     );
+   }
+ 
+   return (
+     <div className="bg-white p-6 rounded-b-2xl rounded-tr-2xl shadow-sm border border-slate-200 h-full flex flex-col">
+       <div className="flex items-center justify-between mb-6">
+         <div>
+           <h2 className="text-xl font-bold text-slate-800">Comprehension Questions</h2>
+           <p className="text-sm text-slate-500">Multiple choice questions based on the script</p>
+         </div>
+         
+         <button
+           onClick={onGenerate}
+           disabled={isGenerating}
+@@ -44,49 +46,49 @@ export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({
+               : 'bg-indigo-600 text-white border-transparent hover:bg-indigo-700'
+             }`}
+         >
+           {isGenerating ? 'Generating...' : questions.length > 0 ? 'Regenerate Questions' : 'Generate Questions'}
+         </button>
+       </div>
+ 
+       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+         {questions.length === 0 ? (
+           <div className="flex flex-col items-center justify-center h-64 text-slate-400">
+              <svg className="w-12 h-12 mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              <p>No questions generated yet</p>
+           </div>
+         ) : (
+           <div className="space-y-6 pb-4">
+             {questions.map((q, index) => (
+               <div key={q.id || index} className="p-4 rounded-xl bg-slate-50 border border-slate-100">
+                 <p className="font-semibold text-slate-800 mb-3 flex gap-2">
+                   <span className="text-indigo-600">{index + 1}.</span>
+                   {q.text}
+                 </p>
+                 <div className="space-y-2 pl-6">
+                   {q.options.map((option, i) => {
+-                    const isCorrect = option === q.correctAnswer;
++                    const isCorrect = showAnswers && option === q.correctAnswer;
+                     return (
+-                      <div 
+-                        key={i} 
++                      <div
++                        key={i}
+                         className={`flex items-center gap-3 p-2 rounded-lg border text-sm transition-colors
+                           ${isCorrect ? 'bg-green-50 border-green-200 text-green-800' : 'bg-white border-slate-200 text-slate-600'}`}
+                       >
+                         <div className={`w-4 h-4 rounded-full border flex items-center justify-center
+                           ${isCorrect ? 'border-green-500 bg-green-500' : 'border-slate-300'}`}>
+                           {isCorrect && <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path></svg>}
+                         </div>
+                         {option}
+                       </div>
+                     );
+                   })}
+                 </div>
+               </div>
+             ))}
+           </div>
+         )}
+       </div>
+     </div>
+   );
+ };
+\ No newline at end of file
+diff --git a/components/ScriptDisplay.tsx b/components/ScriptDisplay.tsx
+index 24b1081ab4ae05dd8d872a38ab444ffe83cbc636..78a234d01b89fe40b891b0c7e69a54109665994f 100644
+--- a/components/ScriptDisplay.tsx
++++ b/components/ScriptDisplay.tsx
+@@ -1,74 +1,115 @@
+ import React, { useMemo } from 'react';
+ 
+ interface ScriptDisplayProps {
+   script: string;
+   setScript: (script: string) => void;
+   onGenerateAudio: () => void;
+   isGeneratingAudio: boolean;
+   hasAudio: boolean;
++  onDownloadMp3: () => void;
++  onDownloadWav: () => void;
++  onDownloadTxt: () => void;
++  onDownloadDocx: () => void;
+ }
+ 
+-export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({ 
+-  script, 
+-  setScript, 
+-  onGenerateAudio, 
++export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({
++  script,
++  setScript,
++  onGenerateAudio,
+   isGeneratingAudio,
+-  hasAudio 
++  hasAudio,
++  onDownloadMp3,
++  onDownloadWav,
++  onDownloadTxt,
++  onDownloadDocx
+ }) => {
+ 
+   const wordCount = useMemo(() => {
+     if (!script || !script.trim()) return 0;
+     return script.trim().split(/\s+/).length;
+   }, [script]);
+ 
+   return (
+     <div className="p-6 h-full flex flex-col bg-white">
+-      <div className="flex items-center justify-between mb-4">
++      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+         <div>
+           <div className="flex items-center gap-3">
+             <h2 className="text-xl font-bold text-slate-800">Exam Script</h2>
+             {wordCount > 0 && (
+               <span className="text-xs font-mono px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md border border-slate-200">
+                 {wordCount} words
+               </span>
+             )}
+           </div>
+           <p className="text-sm text-slate-500">Edit the text before generating audio</p>
+         </div>
+-        
++
+         {script && (
+-          <button
+-            onClick={onGenerateAudio}
+-            disabled={isGeneratingAudio}
+-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm
+-              ${isGeneratingAudio
+-                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+-                : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+-              }`}
+-          >
+-            {isGeneratingAudio ? 'Synthesizing...' : hasAudio ? 'Regenerate Audio' : 'Generate Audio'}
+-          </button>
++          <div className="flex flex-wrap gap-2 justify-end">
++            <button
++              onClick={onGenerateAudio}
++              disabled={isGeneratingAudio}
++              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm
++                ${isGeneratingAudio
++                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
++                  : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
++                }`}
++            >
++              {isGeneratingAudio ? 'Synthesizing...' : hasAudio ? 'Regenerate Audio' : 'Generate Audio'}
++            </button>
++            <button
++              onClick={onDownloadMp3}
++              disabled={!hasAudio}
++              className={`px-3 py-2 text-sm rounded-lg border border-slate-200 ${hasAudio ? 'bg-white hover:bg-slate-50' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
++            >
++              Download MP3
++            </button>
++            <button
++              onClick={onDownloadWav}
++              disabled={!hasAudio}
++              className={`px-3 py-2 text-sm rounded-lg border border-slate-200 ${hasAudio ? 'bg-white hover:bg-slate-50' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
++            >
++              Download WAV
++            </button>
++          </div>
+         )}
+       </div>
+ 
+       <div className="flex-1 relative">
+         <textarea
+           value={script}
+           onChange={(e) => setScript(e.target.value)}
+           className="w-full h-full p-4 bg-slate-50 border border-slate-200 rounded-xl resize-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-mono text-sm leading-relaxed text-slate-700"
+           placeholder="Generated exam script will appear here..."
+         />
+         {!script && (
+           <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-40">
+             <div className="text-center">
+               <svg className="w-12 h-12 mx-auto text-slate-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+               </svg>
+               <p className="text-slate-500 font-medium">Ready to generate</p>
+             </div>
+           </div>
+         )}
+       </div>
++
++      {script && (
++        <div className="mt-4 flex flex-wrap gap-3">
++          <button
++            onClick={onDownloadTxt}
++            className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 bg-slate-50 hover:bg-slate-100"
++          >
++            Export .txt
++          </button>
++          <button
++            onClick={onDownloadDocx}
++            className="px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 bg-slate-50 hover:bg-slate-100"
++          >
++            Export .docx
++          </button>
++        </div>
++      )}
+     </div>
+   );
+ };
+\ No newline at end of file
+diff --git a/services/geminiService.ts b/services/geminiService.ts
+index 09194afd9abe2d1b1195660093737586f1c18a2f..6a9097109522d9608f069ea962568ab910510e72 100644
+--- a/services/geminiService.ts
++++ b/services/geminiService.ts
+@@ -1,171 +1,160 @@
+ import { GoogleGenAI, Modality, Type } from "@google/genai";
+ import { ExamConfig, ExamType, Question } from "../types";
+ 
+-// Helper to get fresh client with current key (safe for re-renders)
+ const getAiClient = () => {
+-  if (!process.env.API_KEY) {
++  const apiKey =
++    process.env.GEMINI_API_KEY ||
++    process.env.API_KEY ||
++    (import.meta as any).env?.VITE_GEMINI_API_KEY ||
++    (import.meta as any).env?.GEMINI_API_KEY;
++  if (!apiKey) {
+     throw new Error("API Key is missing from environment variables");
+   }
+-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
++  return new GoogleGenAI({ apiKey });
++};
++
++const buildSpeakerLabels = (config: ExamConfig) => {
++  if (config.type === ExamType.MONOLOGUE) return ['Narrator'];
++  return config.voiceProfiles.slice(0, config.numberOfSpeakers).map((p, idx) => p.label || `Speaker ${idx + 1}`);
+ };
+ 
+ export const generateExamScript = async (config: ExamConfig): Promise<string> => {
+   const ai = getAiClient();
+-  
+-  // Construct a prompt optimized for the 2.5 flash text model
+-  let prompt = `You are a professional ESL/EFL exam content creator. 
+-  Create a **${config.type}** script for **${config.level}** level students.
+-  The topic is: "${config.topic}".
+-  
+-  The output must be a pure script.
+-  `;
++  const speakerLabels = buildSpeakerLabels(config);
+ 
+-  if (config.type === ExamType.DIALOGUE || config.type === ExamType.CONVERSATION) {
+-    prompt += `
+-    This is a conversation between two people.
+-    Use "Speaker A" and "Speaker B" as the labels.
+-    Ensure the language difficulty strictly matches ${config.level}.
+-    Keep it between 150-300 words.
+-    Return ONLY the script text, no markdown formatting like **bold** or titles.
+-    `;
+-  } else {
+-    prompt += `
+-    This is a single-speaker text.
+-    Ensure the language difficulty strictly matches ${config.level}.
+-    Keep it between 150-300 words.
+-    Return ONLY the script text, no markdown formatting like **bold** or titles.
+-    `;
+-  }
++  const speakerFormatting = speakerLabels.map((label) => `${label}:`).join(' ');
++  const toneLine = `Use a ${config.speakerTone.toLowerCase()} tone with ${config.emotionalTone.toLowerCase()} emotion.`;
++  const difficultyLine = `Vocabulary: ${config.vocabularyComplexity}. Sentence structure: ${config.sentenceComplexity}. Listening speed indicator: ${config.speedIndicator}.`;
++
++  const prompt = `You are a professional ESL/EFL exam content creator.
++  Create a ${config.type} script for ${config.level} learners about "${config.topic}".
++  Purpose: ${config.purpose}. Target length: around ${config.wordCount} words.
++  ${toneLine}
++  ${difficultyLine}
++  Include natural pause markers for ${config.pauseStyle.toLowerCase()} pacing and plan for approximately ${config.audioDuration} seconds of audio.
++  Speakers: ${speakerLabels.length} (${speakerFormatting}).
++  Return ONLY the script text with each turn labeled using the speaker names shown above. Avoid markdown or bullet lists.
++  `;
+ 
+   try {
+     const response = await ai.models.generateContent({
+       model: 'gemini-2.5-flash',
+       contents: prompt,
+     });
+     return response.text || "Failed to generate text.";
+   } catch (error) {
+     console.error("Script Generation Error:", error);
+     throw error;
+   }
+ };
+ 
+ export const generateExamQuestions = async (script: string, config: ExamConfig): Promise<Question[]> => {
+   const ai = getAiClient();
+-  
++
+   const prompt = `Create 5 Multiple Choice Questions based on the following text.
+-  Target Audience Level: ${config.level}.
++  Audience level: ${config.level}.
++  Include an answer key inline with the correct option marked as correctAnswer.
+   Text:
+-  "${script}"
+-  `;
++  "${script}"`;
+ 
+   try {
+     const response = await ai.models.generateContent({
+       model: 'gemini-2.5-flash',
+       contents: prompt,
+       config: {
+         responseMimeType: 'application/json',
+         responseSchema: {
+           type: Type.ARRAY,
+           items: {
+             type: Type.OBJECT,
+             properties: {
+               id: { type: Type.INTEGER },
+               text: { type: Type.STRING, description: "The question text" },
+-              options: { 
+-                type: Type.ARRAY, 
++              options: {
++                type: Type.ARRAY,
+                 items: { type: Type.STRING },
+                 description: "An array of 4 possible answers"
+               },
+               correctAnswer: { type: Type.STRING, description: "The correct option text (must match one of the options)" }
+             },
+             required: ["id", "text", "options", "correctAnswer"]
+           }
+         }
+       }
+     });
+ 
+     const jsonText = response.text;
+     if (!jsonText) return [];
+-    
++
+     return JSON.parse(jsonText) as Question[];
+   } catch (error) {
+     console.error("Question Generation Error:", error);
+     throw error;
+   }
+ };
+ 
+ export const generateExamAudio = async (
+   script: string,
+   config: ExamConfig
+ ): Promise<string> => {
+   const ai = getAiClient();
+ 
++  const speakerLabels = buildSpeakerLabels(config);
+   const isMultiSpeaker = config.type === ExamType.DIALOGUE || config.type === ExamType.CONVERSATION;
+ 
+-  let speechConfig;
+-  
++  let speechConfig: any;
++
+   if (isMultiSpeaker) {
+      speechConfig = {
+         multiSpeakerVoiceConfig: {
+-          speakerVoiceConfigs: [
+-            {
+-              speaker: 'Speaker A',
+-              voiceConfig: { prebuiltVoiceConfig: { voiceName: config.primaryVoice } }
+-            },
+-            {
+-              speaker: 'Speaker B',
+-              voiceConfig: { prebuiltVoiceConfig: { voiceName: config.secondaryVoice } }
+-            }
+-          ]
++          speakerVoiceConfigs: config.voiceProfiles.slice(0, config.numberOfSpeakers).map((profile, idx) => ({
++            speaker: speakerLabels[idx] || `Speaker ${idx + 1}`,
++            voiceConfig: { prebuiltVoiceConfig: { voiceName: profile.voice } }
++          }))
+         }
+     };
+   } else {
+     speechConfig = {
+         voiceConfig: {
+-          prebuiltVoiceConfig: { voiceName: config.primaryVoice },
++          prebuiltVoiceConfig: { voiceName: config.voiceProfiles[0]?.voice || 'Puck' },
+         },
+     };
+   }
+ 
+-  // Construct directions for the model to control emotion and speed
+   const emotion = config.emotionalTone.toLowerCase();
+   const speed = config.speechRate.toLowerCase();
+-  
+-  let promptText = '';
++  const pauseNotes = `Use ${config.pauseStyle.toLowerCase()} pauses between sentences and ${isMultiSpeaker ? 'between speakers' : ''}.`;
++  const accentLine = config.voiceProfiles
++    .slice(0, config.numberOfSpeakers)
++    .map((p, idx) => `${speakerLabels[idx] || `Speaker ${idx + 1}`}: ${p.accent} accent, ${p.voiceStyle} style`)
++    .join(' | ');
+ 
+-  if (isMultiSpeaker) {
+-    promptText = `
+-    Generate audio for the following conversation.
+-    
+-    Directions:
+-    - The emotional tone should be ${emotion}.
+-    - The speaking rate should be ${speed}.
+-    
+-    Script:
+-    ${script}
+-    `;
+-  } else {
+-    // For single speaker, we wrap it in a direct instruction
+-    promptText = `Read the following text with a ${emotion} tone and at a ${speed} pace:\n\n${script}`;
+-  }
++  const promptText = `Generate audio for the following script.
++  Tone: ${config.speakerTone}. Emotion: ${emotion}. Speaking rate: ${speed}.
++  Target duration around ${config.audioDuration} seconds.
++  Accents & styles: ${accentLine}.
++  ${pauseNotes}
++
++  Script:
++  ${script}`;
+ 
+   try {
+     const response = await ai.models.generateContent({
+       model: "gemini-2.5-flash-preview-tts",
+       contents: [{ parts: [{ text: promptText }] }],
+       config: {
+         responseModalities: [Modality.AUDIO],
+         speechConfig: speechConfig,
+       },
+     });
+ 
+     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+     if (!base64Audio) {
+       throw new Error("No audio data returned from API");
+     }
+     return base64Audio;
+   } catch (error) {
+     console.error("Audio Generation Error:", error);
+     throw error;
+   }
+-};
+\ No newline at end of file
++};
+diff --git a/types.ts b/types.ts
+index 754518fd2f12ce12b0d27ca9148317f6aaab865f..543d0e0bab42b51b38d332db45427e8eae7ee06b 100644
+--- a/types.ts
++++ b/types.ts
+@@ -1,62 +1,125 @@
+ export enum DifficultyLevel {
+   A1 = 'A1 (Beginner)',
+   A2 = 'A2 (Elementary)',
+   B1 = 'B1 (Intermediate)',
+   B2 = 'B2 (Upper Intermediate)',
+   C1 = 'C1 (Advanced)',
+   C2 = 'C2 (Proficiency)',
+ }
+ 
+ export enum ExamType {
+   MONOLOGUE = 'Monologue',
+   DIALOGUE = 'Dialogue',
+   CONVERSATION = 'General Conversation',
+   RADIO_TALK = 'Radio Talk',
+   LECTURE = 'Lecture',
+ }
+ 
++export enum ExamPurpose {
++  SCHOOL_EXAM = 'School Exam',
++  QUIZ = 'Quiz',
++  PRACTICE = 'Listening Practice',
++}
++
+ export enum VoiceName {
+   Puck = 'Puck',
+   Charon = 'Charon',
+   Kore = 'Kore',
+   Fenrir = 'Fenrir',
+   Zephyr = 'Zephyr',
+   // Aoede = 'Aoede', // Valid names from docs: Puck, Charon, Kore, Fenrir, Zephyr
+ }
+ 
+ export enum SpeechRate {
+   SLOW = 'Slow',
+   NORMAL = 'Normal',
+   FAST = 'Fast',
+ }
+ 
+ export enum EmotionalTone {
+   NEUTRAL = 'Neutral',
+   HAPPY = 'Happy',
+   SAD = 'Sad',
+   SURPRISED = 'Surprised',
+   SERIOUS = 'Serious',
+   PROFESSIONAL = 'Professional',
+ }
+ 
++export enum SpeakerTone {
++  NEUTRAL = 'Neutral',
++  ENTHUSIASTIC = 'Enthusiastic',
++  FORMAL = 'Formal',
++  FRIENDLY = 'Friendly',
++  SERIOUS = 'Serious',
++  CHILDLIKE = 'Child-like',
++  TEACHER = 'Teacher tone',
++}
++
++export enum VoiceStyle {
++  MALE = 'Male',
++  FEMALE = 'Female',
++  TEEN = 'Teen',
++  CHILD = 'Child',
++  ROBOTIC = 'Robotic',
++}
++
++export enum AccentOption {
++  AMERICAN = 'American',
++  BRITISH = 'British',
++  AUSTRALIAN = 'Australian',
++  INDIAN = 'Indian',
++  CUSTOM = 'Custom',
++}
++
++export enum ComplexityLevel {
++  BASIC = 'Basic',
++  MODERATE = 'Moderate',
++  ADVANCED = 'Advanced',
++}
++
++export enum PauseStyle {
++  NATURAL = 'Natural',
++  BALANCED = 'Balanced',
++  MINIMAL = 'Minimal',
++}
++
++export interface SpeakerProfile {
++  id: number;
++  label: string;
++  voice: VoiceName;
++  voiceStyle: VoiceStyle;
++  accent: AccentOption;
++  tone: SpeakerTone;
++}
++
+ export interface Question {
+   id: number;
+   text: string;
+   options: string[];
+   correctAnswer: string;
+ }
+ 
+ export interface ExamConfig {
+   topic: string;
+   level: DifficultyLevel;
+   type: ExamType;
+-  primaryVoice: VoiceName;
+-  secondaryVoice: VoiceName; // For dialogues
++  wordCount: number;
++  numberOfSpeakers: number;
++  purpose: ExamPurpose;
+   speechRate: SpeechRate;
+   emotionalTone: EmotionalTone;
++  speakerTone: SpeakerTone;
++  vocabularyComplexity: ComplexityLevel;
++  sentenceComplexity: ComplexityLevel;
++  speedIndicator: SpeechRate;
++  pauseStyle: PauseStyle;
++  audioDuration: number;
++  includeQuestions: boolean;
++  includeAnswerKey: boolean;
++  voiceProfiles: SpeakerProfile[];
+ }
+ 
+ export interface GeneratedData {
+   script: string;
+   audioBuffer: AudioBuffer | null;
+ }
+\ No newline at end of file
+diff --git a/utils/audioUtils.ts b/utils/audioUtils.ts
+index 0fc48fde67d43102f1db8a71ffdc0121359b360c..d60fc57818fe8a5e9db80523ba4f6a2e0eeca136 100644
+--- a/utils/audioUtils.ts
++++ b/utils/audioUtils.ts
+@@ -66,25 +66,83 @@ export function audioBufferToWav(buffer: AudioBuffer): Blob {
+ 
+   while (pos < buffer.length) {
+     for (i = 0; i < numOfChan; i++) {
+       // interleave channels
+       sample = Math.max(-1, Math.min(1, channels[i][pos])); // clamp
+       // scale to 16-bit signed int
+       sample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+       view.setInt16(44 + offset, sample, true);
+       offset += 2;
+     }
+     pos++;
+   }
+ 
+   return new Blob([bufferArr], { type: 'audio/wav' });
+ 
+   function setUint16(data: number) {
+     view.setUint16(pos, data, true);
+     pos += 2;
+   }
+ 
+   function setUint32(data: number) {
+     view.setUint32(pos, data, true);
+     pos += 4;
+   }
+ }
++
++// Convert AudioBuffer to MP3 (best-effort, falls back to WAV if MediaRecorder is unavailable)
++export async function audioBufferToMp3(buffer: AudioBuffer): Promise<Blob> {
++  if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') {
++    return audioBufferToWav(buffer);
++  }
++
++  const supportedMime = ['audio/mpeg', 'audio/webm', 'audio/ogg'].find((type) =>
++    (MediaRecorder as any).isTypeSupported ? MediaRecorder.isTypeSupported(type) : false
++  );
++
++  if (!supportedMime) {
++    return audioBufferToWav(buffer);
++  }
++
++  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
++  const destination = audioContext.createMediaStreamDestination();
++  const source = audioContext.createBufferSource();
++  source.buffer = buffer;
++  source.connect(destination);
++
++  return new Promise((resolve, reject) => {
++    const recorder = new MediaRecorder(destination.stream, { mimeType: supportedMime });
++    const chunks: BlobPart[] = [];
++
++    recorder.ondataavailable = (event) => {
++      if (event.data.size > 0) chunks.push(event.data);
++    };
++
++    recorder.onerror = (event) => {
++      console.error('MediaRecorder error', event);
++      resolve(audioBufferToWav(buffer));
++    };
++
++    recorder.onstop = () => {
++      resolve(new Blob(chunks, { type: supportedMime }));
++    };
++
++    recorder.start();
++    source.start(0);
++
++    // Stop after the buffer duration plus a small buffer
++    setTimeout(() => {
++      recorder.stop();
++      source.stop();
++      audioContext.close();
++    }, buffer.duration * 1000 + 300);
++  });
++}
++
++export function downloadBlob(blob: Blob, filename: string) {
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url;
++  a.download = filename;
++  a.click();
++  URL.revokeObjectURL(url);
++}
+diff --git a/utils/exportUtils.ts b/utils/exportUtils.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..9166530843d5ce90886c4bdad71a18b9c95e2350
+--- /dev/null
++++ b/utils/exportUtils.ts
+@@ -0,0 +1,51 @@
++import { Question } from '../types';
++
++export const downloadText = (content: string, filename: string) => {
++  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
++  triggerDownload(blob, filename);
++};
++
++export const downloadDocxLike = (script: string, questions: Question[] = [], includeAnswers: boolean = true) => {
++  const htmlContent = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Listening Exam</title></head><body>` +
++    `<h1>Listening Exam Script</h1><pre style="font-family: inherit; white-space: pre-wrap;">${escapeHtml(script)}</pre>` +
++    (questions.length > 0 ? renderQuestions(questions, includeAnswers) : '') +
++    `</body></html>`;
++
++  const blob = new Blob([htmlContent], {
++    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
++  });
++  triggerDownload(blob, 'listening-exam.docx');
++};
++
++const renderQuestions = (questions: Question[], includeAnswers: boolean) => {
++  return `
++    <h2>Comprehension Questions</h2>
++    <ol>
++      ${questions.map((q) => `
++        <li>
++          <p>${escapeHtml(q.text)}</p>
++          <ol type="A">
++            ${q.options.map((opt) => `<li>${escapeHtml(opt)}</li>`).join('')}
++          </ol>
++          ${includeAnswers ? `<p><strong>Answer:</strong> ${escapeHtml(q.correctAnswer)}</p>` : ''}
++        </li>
++      `).join('')}
++    </ol>
++  `;
++};
++
++const escapeHtml = (text: string) => text
++  .replace(/&/g, '&amp;')
++  .replace(/</g, '&lt;')
++  .replace(/>/g, '&gt;')
++  .replace(/"/g, '&quot;')
++  .replace(/'/g, '&#039;');
++
++const triggerDownload = (blob: Blob, filename: string) => {
++  const url = URL.createObjectURL(blob);
++  const a = document.createElement('a');
++  a.href = url;
++  a.download = filename;
++  a.click();
++  URL.revokeObjectURL(url);
++};
