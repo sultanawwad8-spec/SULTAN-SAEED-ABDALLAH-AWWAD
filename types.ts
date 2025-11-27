@@ -10,9 +10,7 @@ export enum DifficultyLevel {
 export enum ExamType {
   MONOLOGUE = 'Monologue',
   DIALOGUE = 'Dialogue',
-  CONVERSATION = 'General Conversation',
-  RADIO_TALK = 'Radio Talk',
-  LECTURE = 'Lecture',
+  CONVERSATION = 'Conversation',
 }
 
 export enum VoiceName {
@@ -30,13 +28,55 @@ export enum SpeechRate {
   FAST = 'Fast',
 }
 
-export enum EmotionalTone {
+export enum SpeakerTone {
   NEUTRAL = 'Neutral',
-  HAPPY = 'Happy',
-  SAD = 'Sad',
-  SURPRISED = 'Surprised',
+  ENTHUSIASTIC = 'Enthusiastic',
+  FORMAL = 'Formal',
+  FRIENDLY = 'Friendly',
   SERIOUS = 'Serious',
-  PROFESSIONAL = 'Professional',
+  CHILDLIKE = 'Child-like',
+  TEACHER = 'Teacher tone',
+}
+
+export enum VoiceStyle {
+  MALE = 'Male',
+  FEMALE = 'Female',
+  TEEN = 'Teen',
+  CHILD = 'Child',
+  ROBOTIC = 'Robotic',
+}
+
+export enum AccentOption {
+  AMERICAN = 'American',
+  BRITISH = 'British',
+  AUSTRALIAN = 'Australian',
+  INDIAN = 'Indian',
+  CUSTOM = 'Custom',
+}
+
+export enum VocabularyComplexity {
+  BASIC = 'Basic everyday words',
+  MODERATE = 'Moderate academic and daily vocabulary',
+  ADVANCED = 'Advanced/idiomatic vocabulary',
+}
+
+export enum SentenceStructure {
+  SIMPLE = 'Short and simple sentences',
+  MIXED = 'Mix of simple and compound sentences',
+  COMPLEX = 'Complex and academic sentences',
+}
+
+export enum ExamPurpose {
+  SCHOOL = 'School exam',
+  QUIZ = 'Quiz',
+  PRACTICE = 'Listening practice',
+  CERT_PREP = 'Certification prep',
+}
+
+export enum PauseStyle {
+  NATURAL = 'Natural pauses between sentences',
+  SPEAKER = 'Pauses between speakers',
+  NONE = 'No pauses',
 }
 
 export interface Question {
@@ -50,13 +90,36 @@ export interface ExamConfig {
   topic: string;
   level: DifficultyLevel;
   type: ExamType;
+  wordCount: number;
+  purpose: ExamPurpose;
+  speakerCount: number;
+  speakerTone: SpeakerTone;
   primaryVoice: VoiceName;
   secondaryVoice: VoiceName; // For dialogues
   speechRate: SpeechRate;
-  emotionalTone: EmotionalTone;
+  voiceStylePrimary: VoiceStyle;
+  voiceStyleSecondary: VoiceStyle;
+  accent: AccentOption;
+  customAccentNote?: string;
+  vocabularyComplexity: VocabularyComplexity;
+  sentenceStructure: SentenceStructure;
+  speedIndicator: string;
+  audioDuration: number;
+  pauseStyle: PauseStyle;
+  includeQuestions: boolean;
+  includeAnswerKey: boolean;
 }
 
 export interface GeneratedData {
   script: string;
   audioBuffer: AudioBuffer | null;
+}
+
+export interface HistoryItem {
+  id: string;
+  createdAt: number;
+  config: ExamConfig;
+  script: string;
+  audioUrl?: string;
+  mp3Url?: string;
 }

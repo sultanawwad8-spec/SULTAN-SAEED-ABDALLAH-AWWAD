@@ -88,3 +88,52 @@ export function audioBufferToWav(buffer: AudioBuffer): Blob {
     pos += 4;
   }
 }
+
+// Attempt to export an AudioBuffer to MP3/WebM using the MediaRecorder API (browser only)
+export async function audioBufferToMp3(buffer: AudioBuffer): Promise<Blob> {
+  if (typeof window === 'undefined' || typeof MediaRecorder === 'undefined') {
+    throw new Error('MediaRecorder not available in this environment');
+  }
+
+  const mimeType = MediaRecorder.isTypeSupported('audio/mpeg')
+    ? 'audio/mpeg'
+    : MediaRecorder.isTypeSupported('audio/webm')
+      ? 'audio/webm'
+      : '';
+
+  if (!mimeType) {
+    throw new Error('Neither MP3 nor WebM audio recording is supported by this browser');
+  }
+
+  const ctx = new AudioContext({ sampleRate: buffer.sampleRate });
+  const destination = ctx.createMediaStreamDestination();
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(destination);
+
+  return new Promise((resolve, reject) => {
+    const chunks: BlobPart[] = [];
+    const recorder = new MediaRecorder(destination.stream, { mimeType });
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+
+    recorder.onerror = (event) => {
+      reject(event.error);
+    };
+
+    recorder.onstop = async () => {
+      try {
+        await ctx.close();
+      } catch (e) {
+        console.warn('Failed to close audio context', e);
+      }
+      resolve(new Blob(chunks, { type: mimeType }));
+    };
+
+    source.onended = () => recorder.stop();
+    recorder.start();
+    source.start();
+  });
+}

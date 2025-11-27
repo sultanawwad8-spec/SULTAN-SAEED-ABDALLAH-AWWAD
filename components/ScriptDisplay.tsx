@@ -21,6 +21,21 @@ export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({
     return script.trim().split(/\s+/).length;
   }, [script]);
 
+  const handleDownload = (extension: 'txt' | 'docx') => {
+    if (!script) return;
+    const blob = extension === 'txt'
+      ? new Blob([script], { type: 'text/plain;charset=utf-8' })
+      : new Blob([
+          `<!DOCTYPE html><html><body><pre>${script}</pre></body></html>`
+        ], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `exam-script.${extension}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="p-6 h-full flex flex-col bg-white">
       <div className="flex items-center justify-between mb-4">
@@ -36,19 +51,38 @@ export const ScriptDisplay: React.FC<ScriptDisplayProps> = ({
           <p className="text-sm text-slate-500">Edit the text before generating audio</p>
         </div>
         
-        {script && (
-          <button
-            onClick={onGenerateAudio}
-            disabled={isGeneratingAudio}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm
-              ${isGeneratingAudio
-                ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
-                : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
-              }`}
-          >
-            {isGeneratingAudio ? 'Synthesizing...' : hasAudio ? 'Regenerate Audio' : 'Generate Audio'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {script && (
+            <button
+              onClick={onGenerateAudio}
+              disabled={isGeneratingAudio}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm
+                ${isGeneratingAudio
+                  ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                  : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100'
+                }`}
+            >
+              {isGeneratingAudio ? 'Synthesizing...' : hasAudio ? 'Regenerate Audio' : 'Generate Audio'}
+            </button>
+          )}
+
+          {script && (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => handleDownload('txt')}
+                className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200"
+              >
+                Export TXT
+              </button>
+              <button
+                onClick={() => handleDownload('docx')}
+                className="px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 hover:bg-slate-200"
+              >
+                Export DOCX
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 relative">

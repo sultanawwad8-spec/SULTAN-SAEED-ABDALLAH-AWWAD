@@ -6,13 +6,17 @@ interface QuestionsDisplayProps {
   onGenerate: () => void;
   isGenerating: boolean;
   hasScript: boolean;
+  showAnswers: boolean;
+  enabled: boolean;
 }
 
-export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({ 
-  questions, 
-  onGenerate, 
+export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({
+  questions,
+  onGenerate,
   isGenerating,
-  hasScript
+  hasScript,
+  showAnswers,
+  enabled
 }) => {
   
   if (!hasScript) {
@@ -33,13 +37,16 @@ export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({
         <div>
           <h2 className="text-xl font-bold text-slate-800">Comprehension Questions</h2>
           <p className="text-sm text-slate-500">Multiple choice questions based on the script</p>
+          {!enabled && (
+            <p className="text-xs text-red-500">Questions disabled in parameters. Enable in the control panel to generate.</p>
+          )}
         </div>
-        
+
         <button
           onClick={onGenerate}
-          disabled={isGenerating}
+          disabled={isGenerating || !enabled}
           className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm
-            ${isGenerating
+            ${isGenerating || !enabled
               ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
               : 'bg-indigo-600 text-white border-transparent hover:bg-indigo-700'
             }`}
@@ -66,10 +73,10 @@ export const QuestionsDisplay: React.FC<QuestionsDisplayProps> = ({
                 </p>
                 <div className="space-y-2 pl-6">
                   {q.options.map((option, i) => {
-                    const isCorrect = option === q.correctAnswer;
+                    const isCorrect = showAnswers && option === q.correctAnswer;
                     return (
-                      <div 
-                        key={i} 
+                      <div
+                        key={i}
                         className={`flex items-center gap-3 p-2 rounded-lg border text-sm transition-colors
                           ${isCorrect ? 'bg-green-50 border-green-200 text-green-800' : 'bg-white border-slate-200 text-slate-600'}`}
                       >
